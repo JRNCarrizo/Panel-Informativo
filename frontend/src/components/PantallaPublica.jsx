@@ -246,7 +246,7 @@ const PantallaPublica = () => {
             </div>
           </div>
           <div style={{ flex: 1, textAlign: 'center' }}>
-            <h1>PANEL INFORMATIVO - DEPÓSITO</h1>
+            <h1>PANEL CENTRAL</h1>
             <div className="fecha-hora">
               {horaActual.toLocaleString('es-AR', {
                 weekday: 'long',

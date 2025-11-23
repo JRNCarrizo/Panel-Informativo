@@ -14,6 +14,9 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
@@ -92,6 +95,14 @@ public class AuthController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
+    }
+
+    @GetMapping("/existe-admin")
+    public ResponseEntity<Map<String, Boolean>> existeAdmin() {
+        boolean existe = usuarioService.existeUsuario();
+        Map<String, Boolean> response = new HashMap<>();
+        response.put("existe", existe);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/refresh")

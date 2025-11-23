@@ -3,17 +3,68 @@
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #1e3a8a 0%, #1e293b 100%);
   padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Círculos decorativos */
+.login-container::before {
+  content: '';
+  position: absolute;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.1);
+  top: -250px;
+  right: -250px;
+  animation: float 20s ease-in-out infinite;
+}
+
+.login-container::after {
+  content: '';
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  border-radius: 50%;
+  background: rgba(30, 64, 175, 0.15);
+  bottom: -200px;
+  left: -200px;
+  animation: float 15s ease-in-out infinite reverse;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(30px, 30px) scale(1.1);
+  }
 }
 
 .login-card {
   background: white;
   padding: 40px;
-  border-radius: 10px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.1);
   width: 100%;
   max-width: 400px;
+  backdrop-filter: blur(10px);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  position: relative;
+  overflow: hidden;
+}
+
+.login-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #2563eb 0%, #1e40af 100%);
+  border-radius: 16px 16px 0 0;
 }
 
 .login-card h1 {
@@ -59,24 +110,31 @@
 
 .form-group input:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: #2563eb;
 }
 
-.btn-primary {
+.login-card button.btn-primary,
+.login-card .btn-primary {
   width: 100%;
   padding: 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
+  background: #1e40af !important;
+  background-color: #1e40af !important;
+  color: white !important;
+  border: none !important;
   border-radius: 5px;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.2s;
+  transition: background-color 0.3s, box-shadow 0.3s;
+  box-shadow: 0 2px 4px rgba(30, 64, 175, 0.3);
 }
 
-.btn-primary:hover {
-  transform: translateY(-2px);
+.login-card button.btn-primary:hover,
+.login-card .btn-primary:hover {
+  background: #1e3a8a !important;
+  background-color: #1e3a8a !important;
+  box-shadow: 0 4px 8px rgba(30, 64, 175, 0.4);
+  transform: none !important;
 }
 
 .error-message {
@@ -95,7 +153,7 @@
 }
 
 .register-link a {
-  color: #667eea;
+  color: #2563eb;
   text-decoration: none;
 }
 

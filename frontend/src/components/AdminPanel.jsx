@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { pedidoService } from '../services/pedidoService';
 import { usuarioService } from '../services/usuarioService';
@@ -16,6 +16,7 @@ const AdminPanel = () => {
   const [showModal, setShowModal] = useState(false);
   const [showUsuarioModal, setShowUsuarioModal] = useState(false);
   const [showTransportistaModal, setShowTransportistaModal] = useState(false);
+  const [showTransportistaTooltip, setShowTransportistaTooltip] = useState(false);
   const [formData, setFormData] = useState({
     numeroPlanilla: '',
     transportistaId: '',
@@ -76,7 +77,7 @@ const AdminPanel = () => {
           }).catch(err => console.error('Error al recargar pedidos:', err));
         }
         
-        // Actualizar todos los pedidos para el contador
+        // Actualizar todos los pedidos para el contador (IMPORTANTE: esto actualiza el indicador)
         pedidoService.obtenerTodos().then(response => {
           setTodosLosPedidos(response.data || []);
         }).catch(err => console.error('Error al actualizar todos los pedidos:', err));
@@ -282,11 +283,17 @@ const AdminPanel = () => {
     return colors[estado] || '#666';
   };
 
-  // Calcular cantidad de nuevos pedidos realizados
-  const getCantidadNuevosRealizados = () => {
+  // Calcular cantidad de nuevos pedidos realizados (no vistos)
+  // Usar useMemo para recalcular cuando cambian los pedidos o los vistos
+  const cantidadNuevosRealizados = useMemo(() => {
     const pedidosRealizados = todosLosPedidos.filter(p => p.estado === 'REALIZADO');
-    return pedidosRealizados.filter(p => !pedidosRealizadosVistos.has(p.id)).length;
-  };
+    const nuevos = pedidosRealizados.filter(p => !pedidosRealizadosVistos.has(p.id));
+    // Debug: verificar que se está calculando correctamente
+    if (nuevos.length > 0) {
+      console.log('Pedidos realizados nuevos detectados:', nuevos.length, 'IDs:', nuevos.map(p => p.id));
+    }
+    return nuevos.length;
+  }, [todosLosPedidos, pedidosRealizadosVistos]);
 
   // Marcar pedidos realizados como vistos cuando se expande un día
   // NO marcar automáticamente al entrar a la pestaña, solo cuando se ven
@@ -352,29 +359,14 @@ const AdminPanel = () => {
   const pedidosPorDia = getPedidosPorDia();
 
   // Expandir el día de hoy por defecto cuando se carga la sección de realizados
-  // Y marcar los pedidos de hoy como vistos cuando se expande automáticamente
+  // NO marcar como vistos automáticamente - solo cuando el usuario expande explícitamente
   useEffect(() => {
     if (activeTab === 'realizados' && pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0) {
       const hoy = pedidosAgrupadosPorDia.find(dia => dia.esHoy);
       if (hoy && !hoyColapsadoManualmente.current) {
         setDiasExpandidos(prev => {
           if (!prev.has(hoy.fecha)) {
-            // Cuando se expande automáticamente el día de hoy, marcar sus pedidos como vistos
-            if (hoy.pedidos && hoy.pedidos.length > 0) {
-              setPedidosRealizadosVistos(prevVistos => {
-                const nuevoSet = new Set(prevVistos);
-                hoy.pedidos.forEach(pedido => {
-                  nuevoSet.add(pedido.id);
-                });
-                // Guardar en localStorage
-                try {
-                  localStorage.setItem('pedidosRealizadosVistos', JSON.stringify(Array.from(nuevoSet)));
-                } catch (e) {
-                  console.error('Error al guardar pedidos realizados vistos:', e);
-                }
-                return nuevoSet;
-              });
-            }
+            // Solo expandir, NO marcar como vistos automáticamente
             return new Set([...prev, hoy.fecha]);
           }
           return prev;
@@ -408,7 +400,7 @@ const AdminPanel = () => {
         if (dia && dia.esHoy) {
           hoyColapsadoManualmente.current = false;
         }
-        // Cuando se expande un día, marcar todos los pedidos de ese día como vistos
+        // Cuando el usuario expande explícitamente un día, marcar todos los pedidos de ese día como vistos
         if (dia && dia.pedidos) {
           setPedidosRealizadosVistos(prevVistos => {
             const nuevoSet = new Set(prevVistos);
@@ -432,9 +424,33 @@ const AdminPanel = () => {
   return (
     <div className="admin-panel">
       <header className="admin-header">
-        <h1>Panel de Administración</h1>
+        <h1>
+          <svg 
+            width="32" 
+            height="32" 
+            viewBox="0 0 100 100" 
+            style={{ 
+              marginRight: '12px',
+              verticalAlign: 'middle',
+              display: 'inline-block'
+            }}
+          >
+            <rect width="100" height="100" fill="rgba(255, 255, 255, 0.2)" rx="10"/>
+            <g fill="white" opacity="0.95">
+              <rect x="20" y="60" width="12" height="25" rx="2"/>
+              <rect x="36" y="50" width="12" height="35" rx="2"/>
+              <rect x="52" y="40" width="12" height="45" rx="2"/>
+              <rect x="68" y="55" width="12" height="30" rx="2"/>
+            </g>
+            <polyline points="20,70 36,60 52,50 68,55" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity="0.95"/>
+          </svg>
+          Panel de Administración
+        </h1>
         <div className="user-info">
-          <span>{user?.nombreCompleto}</span>
+          <span>
+            <span style={{ marginRight: '8px', fontSize: '1.1rem', verticalAlign: 'middle' }}>👤</span>
+            {user?.nombreCompleto}
+          </span>
           <button onClick={logout} className="btn-logout">
             Salir
           </button>
@@ -454,7 +470,7 @@ const AdminPanel = () => {
           style={{ position: 'relative' }}
         >
           Realizados
-          {getCantidadNuevosRealizados() > 0 && (
+          {cantidadNuevosRealizados > 0 && (
             <span
               style={{
                 position: 'absolute',
@@ -473,7 +489,7 @@ const AdminPanel = () => {
                 boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
               }}
             >
-              {getCantidadNuevosRealizados()}
+              {cantidadNuevosRealizados}
             </span>
           )}
         </button>
@@ -563,12 +579,9 @@ const AdminPanel = () => {
                     <strong>Equipo Asignado:</strong> {pedido.grupoNombre || 'Sin asignar'}
                   </p>
                   <p>
-                    <strong>Fecha de Carga:</strong>{' '}
+                    <strong>Hora de Carga:</strong>{' '}
                     <span style={{ color: '#666' }}>
-                      {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleString('es-AR', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
+                      {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
                         hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit',
@@ -578,7 +591,7 @@ const AdminPanel = () => {
                   </p>
                   {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
                     <p>
-                      <strong>Fecha de Finalización:</strong>{' '}
+                      <strong>Finalización:</strong>{' '}
                       <span style={{ color: '#4CAF50', fontWeight: '600' }}>
                         {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                           year: 'numeric',
@@ -684,7 +697,7 @@ const AdminPanel = () => {
                       }}
                       style={{
                         padding: '8px 16px',
-                        backgroundColor: '#667eea',
+                        backgroundColor: '#1e40af',
                         color: 'white',
                         border: 'none',
                         borderRadius: '5px',
@@ -694,8 +707,8 @@ const AdminPanel = () => {
                         boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                         marginLeft: '15px',
                       }}
-                      onMouseEnter={(e) => e.target.style.backgroundColor = '#5568d3'}
-                      onMouseLeave={(e) => e.target.style.backgroundColor = '#667eea'}
+                      onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a8a'}
+                      onMouseLeave={(e) => e.target.style.backgroundColor = '#1e40af'}
                     >
                       Resumen
                     </button>
@@ -737,12 +750,9 @@ const AdminPanel = () => {
                               <strong>Equipo Asignado:</strong> {pedido.grupoNombre || 'Sin asignar'}
                             </p>
                             <p>
-                              <strong>Fecha de Carga:</strong>{' '}
+                              <strong>Hora de Carga:</strong>{' '}
                               <span style={{ color: '#666' }}>
-                                {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleString('es-AR', {
-                                  year: 'numeric',
-                                  month: '2-digit',
-                                  day: '2-digit',
+                                {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
                                   hour: '2-digit',
                                   minute: '2-digit',
                                   second: '2-digit',
@@ -752,7 +762,7 @@ const AdminPanel = () => {
                             </p>
                             {pedido.fechaActualizacion && (
                               <p>
-                                <strong>Fecha de Finalización:</strong>{' '}
+                                <strong>Finalización:</strong>{' '}
                                 <span style={{ color: '#4CAF50', fontWeight: '600' }}>
                                   {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                                     year: 'numeric',
@@ -1043,7 +1053,7 @@ const AdminPanel = () => {
                           }}
                           style={{
                             padding: '6px 12px',
-                            backgroundColor: '#667eea',
+                            backgroundColor: '#1e40af',
                             color: 'white',
                             border: 'none',
                             borderRadius: '4px',
@@ -1052,8 +1062,8 @@ const AdminPanel = () => {
                             fontWeight: 'bold',
                             boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
                           }}
-                          onMouseEnter={(e) => e.target.style.backgroundColor = '#5568d3'}
-                          onMouseLeave={(e) => e.target.style.backgroundColor = '#667eea'}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a8a'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#1e40af'}
                         >
                           Activar
                         </button>
@@ -1083,14 +1093,29 @@ const AdminPanel = () => {
                   required
                 />
               </div>
-              <div className="form-group">
+              <div className="form-group" style={{ position: 'relative' }}>
                 <label>Transportista</label>
                 <select
                   value={formData.transportistaId || ''}
                   onChange={(e) =>
                     setFormData({ ...formData, transportistaId: e.target.value })
                   }
+                  onMouseEnter={() => {
+                    const transportistasActivos = transportistas.filter(t => t.activo);
+                    if (transportistasActivos.length === 0) {
+                      setShowTransportistaTooltip(true);
+                    }
+                  }}
+                  onMouseLeave={() => setShowTransportistaTooltip(false)}
+                  onFocus={() => {
+                    const transportistasActivos = transportistas.filter(t => t.activo);
+                    if (transportistasActivos.length === 0) {
+                      setShowTransportistaTooltip(true);
+                    }
+                  }}
+                  onBlur={() => setShowTransportistaTooltip(false)}
                   required
+                  style={{ position: 'relative' }}
                 >
                   <option value="">Seleccionar transportista...</option>
                   {transportistas
@@ -1101,6 +1126,41 @@ const AdminPanel = () => {
                       </option>
                     ))}
                 </select>
+                {showTransportistaTooltip && transportistas.filter(t => t.activo).length === 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    marginTop: '8px',
+                    padding: '12px 16px',
+                    backgroundColor: '#1e40af',
+                    color: 'white',
+                    borderRadius: '8px',
+                    fontSize: '0.9rem',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                    zIndex: 1000,
+                    maxWidth: '300px',
+                    lineHeight: '1.5',
+                    animation: 'fadeIn 0.3s ease-in'
+                  }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
+                      ℹ️ No hay transportistas registrados
+                    </div>
+                    <div>
+                      Para crear un pedido, primero debes ir a la sección <strong>"Transportistas"</strong> y crear al menos un transportista.
+                    </div>
+                    <div style={{
+                      position: 'absolute',
+                      bottom: '100%',
+                      left: '20px',
+                      width: 0,
+                      height: 0,
+                      borderLeft: '8px solid transparent',
+                      borderRight: '8px solid transparent',
+                      borderBottom: '8px solid #1e40af'
+                    }}></div>
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label>Prioridad</label>

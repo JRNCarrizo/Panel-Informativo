@@ -107,6 +107,10 @@ public class UsuarioService implements UserDetailsService {
                 .orElse(null);
     }
 
+    public boolean existeUsuario() {
+        return usuarioRepository.count() > 0;
+    }
+
     public List<Usuario> obtenerTodosLosUsuarios() {
         return usuarioRepository.findAll();
     }

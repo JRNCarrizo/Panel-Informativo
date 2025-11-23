@@ -44,6 +44,7 @@ public class SecurityConfig {
                         .requestMatchers("/assets/**", "/static/**", "/*.js", "/*.css", "/*.ico", "/*.png", "/*.jpg", "/*.svg", "/*.woff", "/*.woff2", "/favicon.ico").permitAll()
                         .requestMatchers("/", "/index.html", "/login", "/admin", "/deposito", "/pantalla", "/pantalla-publica", "/registro-primer-admin").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/auth/existe-admin").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         // Endpoints públicos para la pantalla pública (solo lectura - GET)
                         .requestMatchers(HttpMethod.GET, "/api/pedidos").permitAll()

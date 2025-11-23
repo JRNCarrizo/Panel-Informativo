@@ -47,6 +47,9 @@ const DepositoPanel = () => {
   const [showResumenModal, setShowResumenModal] = useState(false);
   const [pedidosResumen, setPedidosResumen] = useState([]);
   const [fechaResumen, setFechaResumen] = useState('');
+  // Estado para el tooltip de equipos
+  const [showEquipoTooltip, setShowEquipoTooltip] = useState(false);
+  const [equipoTooltipPedidoId, setEquipoTooltipPedidoId] = useState(null);
 
   // Ref para rastrear si es la primera carga
   const isInitialLoad = useRef(true);
@@ -212,27 +215,9 @@ const DepositoPanel = () => {
     }
   }, [filtroEstado, pedidos]);
 
-  // También marcar como vistos cuando se cargan inicialmente los pedidos de la pestaña actual
-  useEffect(() => {
-    if ((filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') && pedidos.length > 0) {
-      // Solo actualizar si no hay pedidos vistos para este estado aún
-      setPedidosVistos(prev => {
-        if (prev[filtroEstado].size === 0) {
-          const nuevosVistos = new Set();
-          pedidos.forEach(pedido => {
-            nuevosVistos.add(pedido.id);
-          });
-          const nuevoEstado = {
-            ...prev,
-            [filtroEstado]: nuevosVistos,
-          };
-          guardarPedidosVistos(nuevoEstado);
-          return nuevoEstado;
-        }
-        return prev;
-      });
-    }
-  }, [pedidos, filtroEstado]);
+  // NO marcar automáticamente como vistos al cargar
+  // Los pedidos solo se marcarán como vistos cuando el usuario cambie a esa pestaña
+  // (esto se maneja en el otro useEffect que detecta cambios de pestaña)
 
   // Función para obtener el valor numérico de la prioridad (mayor = más urgente)
   const getPrioridadValue = (prioridad) => {
@@ -511,6 +496,13 @@ const DepositoPanel = () => {
     return cantidad;
   }, [todosLosPedidos, pedidosVistos]);
 
+  // Calcular cantidad total de pedidos por estado (para mostrar en el indicador)
+  const getCantidadTotal = useCallback((estado) => {
+    if (estado === 'REALIZADO') return 0;
+    const pedidosEstado = todosLosPedidos[estado] || [];
+    return pedidosEstado.length;
+  }, [todosLosPedidos]);
+
   // Calcular pedidos realizados por día y agruparlos
   const getPedidosAgrupadosPorDia = () => {
     if (filtroEstado !== 'REALIZADO') return null;
@@ -682,9 +674,33 @@ const DepositoPanel = () => {
   return (
     <div className="deposito-panel">
       <header className="deposito-header">
-        <h1>Panel de Depósito</h1>
+        <h1>
+          <svg 
+            width="32" 
+            height="32" 
+            viewBox="0 0 100 100" 
+            style={{ 
+              marginRight: '12px',
+              verticalAlign: 'middle',
+              display: 'inline-block'
+            }}
+          >
+            <rect width="100" height="100" fill="rgba(255, 255, 255, 0.2)" rx="10"/>
+            <g fill="white" opacity="0.95">
+              <rect x="20" y="60" width="12" height="25" rx="2"/>
+              <rect x="36" y="50" width="12" height="35" rx="2"/>
+              <rect x="52" y="40" width="12" height="45" rx="2"/>
+              <rect x="68" y="55" width="12" height="30" rx="2"/>
+            </g>
+            <polyline points="20,70 36,60 52,50 68,55" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity="0.95"/>
+          </svg>
+          Panel de Depósito
+        </h1>
         <div className="user-info">
-          <span>{user?.nombreCompleto || user?.username || 'Usuario'}</span>
+          <span>
+            <span style={{ marginRight: '8px', fontSize: '1.1rem', verticalAlign: 'middle' }}>👤</span>
+            {user?.nombreCompleto || user?.username || 'Usuario'}
+          </span>
           <button onClick={logout} className="btn-logout">
             Salir
           </button>
@@ -699,7 +715,7 @@ const DepositoPanel = () => {
             style={{ position: 'relative' }}
           >
             Pendientes
-            {getCantidadNuevos('PENDIENTE') > 0 && (
+            {getCantidadTotal('PENDIENTE') > 0 && (
               <span
                 style={{
                   position: 'absolute',
@@ -718,7 +734,7 @@ const DepositoPanel = () => {
                   boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                 }}
               >
-                {getCantidadNuevos('PENDIENTE')}
+                {getCantidadTotal('PENDIENTE')}
               </span>
             )}
           </button>
@@ -728,7 +744,7 @@ const DepositoPanel = () => {
             style={{ position: 'relative' }}
           >
             En Proceso
-            {getCantidadNuevos('EN_PROCESO') > 0 && (
+            {getCantidadTotal('EN_PROCESO') > 0 && (
               <span
                 style={{
                   position: 'absolute',
@@ -747,7 +763,7 @@ const DepositoPanel = () => {
                   boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                 }}
               >
-                {getCantidadNuevos('EN_PROCESO')}
+                {getCantidadTotal('EN_PROCESO')}
               </span>
             )}
           </button>
@@ -910,7 +926,7 @@ const DepositoPanel = () => {
                             onClick={() => handleActivarGrupo(grupo.id)}
                             style={{
                               padding: '6px 12px',
-                              backgroundColor: '#4CAF50',
+                              backgroundColor: '#0f766e',
                               color: 'white',
                               border: 'none',
                               borderRadius: '4px',
@@ -919,8 +935,8 @@ const DepositoPanel = () => {
                               fontWeight: 'bold',
                               transition: 'background-color 0.2s',
                             }}
-                            onMouseEnter={(e) => e.target.style.backgroundColor = '#388E3C'}
-                            onMouseLeave={(e) => e.target.style.backgroundColor = '#4CAF50'}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#0d9488'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#0f766e'}
                           >
                             Activar
                           </button>
@@ -1096,7 +1112,7 @@ const DepositoPanel = () => {
                     }}
                     style={{
                       padding: '8px 16px',
-                      backgroundColor: '#4CAF50',
+                      backgroundColor: '#0f766e',
                       color: 'white',
                       border: 'none',
                       borderRadius: '5px',
@@ -1106,8 +1122,8 @@ const DepositoPanel = () => {
                       boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                       marginLeft: '15px',
                     }}
-                    onMouseEnter={(e) => e.target.style.backgroundColor = '#45a049'}
-                    onMouseLeave={(e) => e.target.style.backgroundColor = '#4CAF50'}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = '#0d9488'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = '#0f766e'}
                   >
                     Resumen
                   </button>
@@ -1243,7 +1259,7 @@ const DepositoPanel = () => {
               </div>
               {pedido.estado !== 'REALIZADO' && (
                 <div className="pedido-actions">
-                  <div className="action-group">
+                  <div className="action-group" style={{ position: 'relative' }}>
                     <label>Asignar Equipo:</label>
                     <select
                       value={pedido.grupoId || ''}
@@ -1251,6 +1267,31 @@ const DepositoPanel = () => {
                         if (e.target.value) {
                           handleAsignarGrupo(pedido.id, parseInt(e.target.value));
                         }
+                        setShowEquipoTooltip(false);
+                      }}
+                      onMouseDown={(e) => {
+                        const equiposActivos = grupos.filter(g => g.activo !== false);
+                        if (equiposActivos.length === 0) {
+                          e.preventDefault();
+                          setEquipoTooltipPedidoId(pedido.id);
+                          setShowEquipoTooltip(true);
+                          // Cerrar el tooltip después de 5 segundos
+                          setTimeout(() => setShowEquipoTooltip(false), 5000);
+                        }
+                      }}
+                      onFocus={(e) => {
+                        const equiposActivos = grupos.filter(g => g.activo !== false);
+                        if (equiposActivos.length === 0) {
+                          e.target.blur();
+                          setEquipoTooltipPedidoId(pedido.id);
+                          setShowEquipoTooltip(true);
+                          // Cerrar el tooltip después de 5 segundos
+                          setTimeout(() => setShowEquipoTooltip(false), 5000);
+                        }
+                      }}
+                      onBlur={() => {
+                        // Cerrar el tooltip después de un pequeño delay para permitir que se vea
+                        setTimeout(() => setShowEquipoTooltip(false), 200);
                       }}
                     >
                       <option value="">Seleccionar...</option>
@@ -1260,6 +1301,41 @@ const DepositoPanel = () => {
                         </option>
                       ))}
                     </select>
+                    {showEquipoTooltip && equipoTooltipPedidoId === pedido.id && grupos.filter(g => g.activo !== false).length === 0 && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        marginTop: '8px',
+                        padding: '12px 16px',
+                        backgroundColor: '#0f766e',
+                        color: 'white',
+                        borderRadius: '8px',
+                        fontSize: '0.9rem',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        zIndex: 1000,
+                        maxWidth: '300px',
+                        lineHeight: '1.5',
+                        animation: 'fadeIn 0.3s ease-in'
+                      }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
+                          ℹ️ No hay equipos registrados
+                        </div>
+                        <div>
+                          Para asignar un equipo, primero debes ir a la sección <strong>"Equipos"</strong> y crear al menos un equipo.
+                        </div>
+                        <div style={{
+                          position: 'absolute',
+                          bottom: '100%',
+                          left: '20px',
+                          width: 0,
+                          height: 0,
+                          borderLeft: '8px solid transparent',
+                          borderRight: '8px solid transparent',
+                          borderBottom: '8px solid #0f766e'
+                        }}></div>
+                      </div>
+                    )}
                   </div>
                   <div className="action-group">
                     {pedido.estado === 'PENDIENTE' && (
@@ -1305,7 +1381,7 @@ const DepositoPanel = () => {
                           onClick={() => handleCambiarEstado(pedido.id, 'REALIZADO')}
                           style={{
                             flex: 1,
-                            backgroundColor: '#4CAF50',
+                            backgroundColor: '#0f766e',
                             color: 'white',
                             border: 'none',
                             padding: '10px 20px',
