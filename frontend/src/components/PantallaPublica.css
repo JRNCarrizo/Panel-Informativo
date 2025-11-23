@@ -1,0 +1,197 @@
+.pantalla-publica {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+  color: white;
+  font-family: 'Arial', sans-serif;
+}
+
+.pantalla-header {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 20px 30px; /* Reducido para pantallas más pequeñas */
+  text-align: center;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.pantalla-header h1 {
+  margin: 0 0 8px 0;
+  font-size: clamp(1.8rem, 3.5vw, 2.8rem); /* Ajustado para 14": mínimo 1.8rem, máximo 2.8rem */
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  letter-spacing: 1.5px;
+}
+
+.fecha-hora {
+  font-size: clamp(1rem, 1.5vw, 1.2rem); /* Responsive para fecha */
+  opacity: 0.9;
+  text-transform: uppercase;
+}
+
+.pantalla-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px; /* Reducido para pantallas más pequeñas */
+  padding: 20px 30px; /* Reducido para pantallas más pequeñas */
+  max-width: 98vw; /* Usar casi todo el ancho disponible */
+  margin: 0 auto;
+}
+
+.seccion-pedidos {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 15px; /* Reducido para pantallas más pequeñas */
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.seccion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px; /* Reducido para pantallas más pequeñas */
+  border-radius: 8px;
+  margin-bottom: 15px; /* Reducido */
+  font-weight: bold;
+  font-size: clamp(1.2rem, 2vw, 1.6rem); /* Ajustado para 14": mínimo 1.2rem, máximo 1.6rem */
+}
+
+.seccion-header.pendiente {
+  background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+}
+
+.seccion-header.proceso {
+  background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+}
+
+.contador {
+  background: rgba(255, 255, 255, 0.3);
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.pedidos-lista {
+  max-height: calc(100vh - 280px); /* Ajustado dinámicamente según el header */
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.pedidos-lista::-webkit-scrollbar {
+  width: 8px;
+}
+
+.pedidos-lista::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.pedidos-lista::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+}
+
+.pedidos-lista::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.pedido-item {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 15px; /* Reducido para pantallas más pequeñas */
+  margin-bottom: 12px; /* Reducido */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  animation: slideIn 0.5s ease-out;
+  border-left: 4px solid transparent;
+  transition: all 0.3s;
+}
+
+.pedido-item:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: translateX(5px);
+}
+
+.pedido-item.proceso {
+  border-left-color: #2196F3;
+}
+
+.pedido-numero {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex: 1;
+}
+
+.numero-planilla {
+  font-size: clamp(1.5rem, 2.5vw, 2.2rem); /* Ajustado para 14": mínimo 1.5rem, máximo 2.2rem */
+  font-weight: bold;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+  min-width: 120px; /* Reducido */
+}
+
+.prioridad-indicator {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+}
+
+.pedido-details {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.transportista {
+  font-size: clamp(1rem, 1.8vw, 1.4rem); /* Ajustado para 14": mínimo 1rem, máximo 1.4rem */
+  font-weight: 600;
+}
+
+.grupo {
+  font-size: clamp(0.9rem, 1.5vw, 1.1rem); /* Responsive para grupo */
+  opacity: 0.9;
+}
+
+.prioridad-badge-large {
+  padding: 8px 16px; /* Reducido */
+  border-radius: 20px;
+  font-weight: bold;
+  font-size: clamp(0.85rem, 1.5vw, 1.1rem); /* Responsive para badge */
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.sin-pedidos {
+  text-align: center;
+  padding: 60px 20px;
+  font-size: 1.5rem;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (max-width: 1200px) {
+  .pantalla-content {
+    grid-template-columns: 1fr;
+  }
+
+  .pantalla-header h1 {
+    font-size: 2rem;
+  }
+
+  .numero-planilla {
+    font-size: 1.5rem;
+  }
+}
+

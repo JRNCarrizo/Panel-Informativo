@@ -1,0 +1,69 @@
+package com.Panelinformativo.pedidos.model;
+
+import com.Panelinformativo.grupos.model.Grupo;
+import com.Panelinformativo.transportistas.model.Transportista;
+import com.Panelinformativo.usuarios.model.Usuario;
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "pedidos")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Pedido {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String numeroPlanilla;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "transportista_id")
+    private Transportista transportista;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Prioridad prioridad = Prioridad.NORMAL;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private EstadoPedido estado = EstadoPedido.PENDIENTE;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "grupo_id")
+    private Grupo grupoAsignado;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "usuario_creador_id", nullable = false)
+    private Usuario usuarioCreador;
+
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime fechaCreacion = LocalDateTime.now();
+
+    private LocalDateTime fechaActualizacion;
+
+    @PreUpdate
+    protected void onUpdate() {
+        fechaActualizacion = LocalDateTime.now();
+    }
+
+    public enum Prioridad {
+        BAJA,
+        NORMAL,
+        ALTA,
+        URGENTE
+    }
+
+    public enum EstadoPedido {
+        PENDIENTE,
+        EN_PROCESO,
+        REALIZADO
+    }
+}
+
