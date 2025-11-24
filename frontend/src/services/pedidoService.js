@@ -11,6 +11,7 @@ export const pedidoService = {
     return api.put(`/pedidos/${id}/estado`, JSON.stringify(estado));
   },
   asignarGrupo: (id, grupoId) => api.put(`/pedidos/${id}/grupo`, grupoId),
+  quitarGrupo: (id) => api.delete(`/pedidos/${id}/grupo`),
   eliminar: (id) => api.delete(`/pedidos/${id}`),
 };
 

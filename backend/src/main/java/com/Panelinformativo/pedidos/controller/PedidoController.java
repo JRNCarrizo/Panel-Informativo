@@ -91,6 +91,18 @@ public class PedidoController {
         }
     }
 
+    @DeleteMapping("/{id}/grupo")
+    @PreAuthorize("hasRole('DEPOSITO')")
+    public ResponseEntity<?> quitarGrupo(@PathVariable Long id) {
+        try {
+            PedidoDTO pedido = pedidoService.quitarGrupo(id);
+            webSocketService.notificarActualizacionPedido(pedido);
+            return ResponseEntity.ok(pedido);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> actualizarPedido(@PathVariable Long id, @Valid @RequestBody PedidoCreateDTO dto) {

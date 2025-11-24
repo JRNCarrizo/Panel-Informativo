@@ -78,6 +78,7 @@ const AdminPanel = () => {
         }
         
         // Actualizar todos los pedidos para el contador (IMPORTANTE: esto actualiza el indicador)
+        // Hacer esto siempre, independientemente de la pestaña activa
         pedidoService.obtenerTodos().then(response => {
           setTodosLosPedidos(response.data || []);
         }).catch(err => console.error('Error al actualizar todos los pedidos:', err));
@@ -290,7 +291,9 @@ const AdminPanel = () => {
     const nuevos = pedidosRealizados.filter(p => !pedidosRealizadosVistos.has(p.id));
     // Debug: verificar que se está calculando correctamente
     if (nuevos.length > 0) {
-      console.log('Pedidos realizados nuevos detectados:', nuevos.length, 'IDs:', nuevos.map(p => p.id));
+      console.log('AdminPanel - Pedidos realizados nuevos detectados:', nuevos.length, 'IDs:', nuevos.map(p => p.id));
+      console.log('AdminPanel - Total pedidos realizados:', pedidosRealizados.length);
+      console.log('AdminPanel - Pedidos vistos:', pedidosRealizadosVistos.size);
     }
     return nuevos.length;
   }, [todosLosPedidos, pedidosRealizadosVistos]);
@@ -355,8 +358,9 @@ const AdminPanel = () => {
     }));
   };
 
-  const pedidosAgrupadosPorDia = getPedidosAgrupadosPorDia();
-  const pedidosPorDia = getPedidosPorDia();
+  // Usar useMemo para estabilizar pedidosAgrupadosPorDia
+  const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [activeTab, pedidos]);
+  const pedidosPorDia = useMemo(() => getPedidosPorDia(), [activeTab, pedidos]);
 
   // Expandir el día de hoy por defecto cuando se carga la sección de realizados
   // NO marcar como vistos automáticamente - solo cuando el usuario expande explícitamente
@@ -584,7 +588,6 @@ const AdminPanel = () => {
                       {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
                         hour: '2-digit',
                         minute: '2-digit',
-                        second: '2-digit',
                         hour12: false,
                       })}
                     </span>
@@ -599,7 +602,6 @@ const AdminPanel = () => {
                           day: '2-digit',
                           hour: '2-digit',
                           minute: '2-digit',
-                          second: '2-digit',
                           hour12: false,
                         })}
                       </span>
@@ -755,7 +757,6 @@ const AdminPanel = () => {
                                 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
                                   hour: '2-digit',
                                   minute: '2-digit',
-                                  second: '2-digit',
                                   hour12: false,
                                 })}
                               </span>
@@ -770,7 +771,6 @@ const AdminPanel = () => {
                                     day: '2-digit',
                                     hour: '2-digit',
                                     minute: '2-digit',
-                                    second: '2-digit',
                                     hour12: false,
                                   })}
                                 </span>

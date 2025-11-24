@@ -308,6 +308,15 @@ const DepositoPanel = () => {
     }
   };
 
+  const handleQuitarGrupo = async (pedidoId) => {
+    try {
+      await pedidoService.quitarGrupo(pedidoId);
+      cargarPedidos();
+    } catch (error) {
+      alert(error.response?.data || 'Error al quitar equipo');
+    }
+  };
+
   const handleCambiarEstado = async (pedidoId, nuevoEstado) => {
     try {
       const pedidoActual = pedidos.find(p => p.id === pedidoId);
@@ -1165,6 +1174,18 @@ const DepositoPanel = () => {
                             <strong>Equipo Asignado:</strong>{' '}
                             {pedido.grupoNombre || 'Sin asignar'}
                           </p>
+                          {pedido.fechaCreacion && (
+                            <p>
+                              <strong>Hora de Carga:</strong>{' '}
+                              <span style={{ color: '#666' }}>
+                                {new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: false,
+                                })}
+                              </span>
+                            </p>
+                          )}
                           {pedido.fechaActualizacion && (
                             <p>
                               <strong>Fecha de Finalización:</strong>{' '}
@@ -1175,7 +1196,6 @@ const DepositoPanel = () => {
                                   day: '2-digit',
                                   hour: '2-digit',
                                   minute: '2-digit',
-                                  second: '2-digit',
                                   hour12: false,
                                 })}
                               </span>
@@ -1240,6 +1260,18 @@ const DepositoPanel = () => {
                   <strong>Equipo Asignado:</strong>{' '}
                   {pedido.grupoNombre || 'Sin asignar'}
                 </p>
+                {pedido.fechaCreacion && (
+                  <p>
+                    <strong>Hora de Carga:</strong>{' '}
+                    <span style={{ color: '#666' }}>
+                      {new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                      })}
+                    </span>
+                  </p>
+                )}
                 {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
                   <p>
                     <strong>Fecha de Finalización:</strong>{' '}
@@ -1259,84 +1291,89 @@ const DepositoPanel = () => {
               </div>
               {pedido.estado !== 'REALIZADO' && (
                 <div className="pedido-actions">
-                  <div className="action-group" style={{ position: 'relative' }}>
-                    <label>Asignar Equipo:</label>
-                    <select
-                      value={pedido.grupoId || ''}
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleAsignarGrupo(pedido.id, parseInt(e.target.value));
-                        }
-                        setShowEquipoTooltip(false);
-                      }}
-                      onMouseDown={(e) => {
-                        const equiposActivos = grupos.filter(g => g.activo !== false);
-                        if (equiposActivos.length === 0) {
-                          e.preventDefault();
-                          setEquipoTooltipPedidoId(pedido.id);
-                          setShowEquipoTooltip(true);
-                          // Cerrar el tooltip después de 5 segundos
-                          setTimeout(() => setShowEquipoTooltip(false), 5000);
-                        }
-                      }}
-                      onFocus={(e) => {
-                        const equiposActivos = grupos.filter(g => g.activo !== false);
-                        if (equiposActivos.length === 0) {
-                          e.target.blur();
-                          setEquipoTooltipPedidoId(pedido.id);
-                          setShowEquipoTooltip(true);
-                          // Cerrar el tooltip después de 5 segundos
-                          setTimeout(() => setShowEquipoTooltip(false), 5000);
-                        }
-                      }}
-                      onBlur={() => {
-                        // Cerrar el tooltip después de un pequeño delay para permitir que se vea
-                        setTimeout(() => setShowEquipoTooltip(false), 200);
-                      }}
-                    >
-                      <option value="">Seleccionar...</option>
-                      {grupos.map((grupo) => (
-                        <option key={grupo.id} value={grupo.id}>
-                          {grupo.nombre}
-                        </option>
-                      ))}
-                    </select>
-                    {showEquipoTooltip && equipoTooltipPedidoId === pedido.id && grupos.filter(g => g.activo !== false).length === 0 && (
-                      <div style={{
-                        position: 'absolute',
-                        top: '100%',
-                        left: 0,
-                        marginTop: '8px',
-                        padding: '12px 16px',
-                        backgroundColor: '#0f766e',
-                        color: 'white',
-                        borderRadius: '8px',
-                        fontSize: '0.9rem',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        zIndex: 1000,
-                        maxWidth: '300px',
-                        lineHeight: '1.5',
-                        animation: 'fadeIn 0.3s ease-in'
-                      }}>
-                        <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
-                          ℹ️ No hay equipos registrados
-                        </div>
-                        <div>
-                          Para asignar un equipo, primero debes ir a la sección <strong>"Equipos"</strong> y crear al menos un equipo.
-                        </div>
+                  {pedido.estado === 'PENDIENTE' && (
+                    <div className="action-group" style={{ position: 'relative' }}>
+                      <label>Asignar Equipo:</label>
+                      <select
+                        value={pedido.grupoId || ''}
+                        onChange={(e) => {
+                          if (e.target.value === 'sin-asignar') {
+                            handleQuitarGrupo(pedido.id);
+                          } else if (e.target.value) {
+                            handleAsignarGrupo(pedido.id, parseInt(e.target.value));
+                          }
+                          setShowEquipoTooltip(false);
+                        }}
+                        onMouseDown={(e) => {
+                          const equiposActivos = grupos.filter(g => g.activo !== false);
+                          if (equiposActivos.length === 0) {
+                            e.preventDefault();
+                            setEquipoTooltipPedidoId(pedido.id);
+                            setShowEquipoTooltip(true);
+                            // Cerrar el tooltip después de 5 segundos
+                            setTimeout(() => setShowEquipoTooltip(false), 5000);
+                          }
+                        }}
+                        onFocus={(e) => {
+                          const equiposActivos = grupos.filter(g => g.activo !== false);
+                          if (equiposActivos.length === 0) {
+                            e.target.blur();
+                            setEquipoTooltipPedidoId(pedido.id);
+                            setShowEquipoTooltip(true);
+                            // Cerrar el tooltip después de 5 segundos
+                            setTimeout(() => setShowEquipoTooltip(false), 5000);
+                          }
+                        }}
+                        onBlur={() => {
+                          // Cerrar el tooltip después de un pequeño delay para permitir que se vea
+                          setTimeout(() => setShowEquipoTooltip(false), 200);
+                        }}
+                      >
+                        <option value="">Seleccionar...</option>
+                        {grupos.map((grupo) => (
+                          <option key={grupo.id} value={grupo.id}>
+                            {grupo.nombre}
+                          </option>
+                        ))}
+                        <option value="sin-asignar">Sin asignar</option>
+                      </select>
+                      {showEquipoTooltip && equipoTooltipPedidoId === pedido.id && grupos.filter(g => g.activo !== false).length === 0 && (
                         <div style={{
                           position: 'absolute',
-                          bottom: '100%',
-                          left: '20px',
-                          width: 0,
-                          height: 0,
-                          borderLeft: '8px solid transparent',
-                          borderRight: '8px solid transparent',
-                          borderBottom: '8px solid #0f766e'
-                        }}></div>
-                      </div>
-                    )}
-                  </div>
+                          top: '100%',
+                          left: 0,
+                          marginTop: '8px',
+                          padding: '12px 16px',
+                          backgroundColor: '#0f766e',
+                          color: 'white',
+                          borderRadius: '8px',
+                          fontSize: '0.9rem',
+                          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                          zIndex: 1000,
+                          maxWidth: '300px',
+                          lineHeight: '1.5',
+                          animation: 'fadeIn 0.3s ease-in'
+                        }}>
+                          <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
+                            ℹ️ No hay equipos registrados
+                          </div>
+                          <div>
+                            Para asignar un equipo, primero debes ir a la sección <strong>"Equipos"</strong> y crear al menos un equipo.
+                          </div>
+                          <div style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            left: '20px',
+                            width: 0,
+                            height: 0,
+                            borderLeft: '8px solid transparent',
+                            borderRight: '8px solid transparent',
+                            borderBottom: '8px solid #0f766e'
+                          }}></div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="action-group">
                     {pedido.estado === 'PENDIENTE' && (
                       <button

@@ -98,6 +98,16 @@ public class PedidoService {
     }
 
     @Transactional
+    public PedidoDTO quitarGrupo(Long id) {
+        Pedido pedido = pedidoRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
+        
+        pedido.setGrupoAsignado(null);
+        pedido = pedidoRepository.save(pedido);
+        return convertirADTO(pedido);
+    }
+
+    @Transactional
     public PedidoDTO actualizarPedido(Long id, PedidoCreateDTO dto) {
         Pedido pedido = pedidoRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
