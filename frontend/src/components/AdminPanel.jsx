@@ -452,7 +452,7 @@ const AdminPanel = () => {
         </h1>
         <div className="user-info">
           <span>
-            <span style={{ marginRight: '8px', fontSize: '1.1rem', verticalAlign: 'middle' }}>👤</span>
+            <span>👤</span>
             {user?.nombreCompleto}
           </span>
           <button onClick={logout} className="btn-logout">
@@ -519,8 +519,7 @@ const AdminPanel = () => {
 
       {activeTab === 'pedidos' && (
         <div className="content-section">
-          <div className="section-header">
-            <h2>Gestión de Pedidos</h2>
+          <div className="section-header" style={{ justifyContent: 'flex-end' }}>
             <button
               onClick={() => setShowModal(true)}
               style={{
@@ -661,10 +660,6 @@ const AdminPanel = () => {
 
       {activeTab === 'realizados' && (
         <div className="content-section">
-          <div className="section-header">
-            <h2>Pedidos Realizados</h2>
-          </div>
-          
           {pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               {pedidosAgrupadosPorDia.map((dia) => (
@@ -879,28 +874,28 @@ const AdminPanel = () => {
 
       {activeTab === 'transportistas' && (
         <div className="content-section">
-          <div className="section-header">
-            <h2>Gestión de Transportistas</h2>
-            <button
-              onClick={() => setShowTransportistaModal(true)}
-              style={{
-                padding: '10px 20px',
-                backgroundColor: '#2196F3',
-                color: 'white',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 'bold',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-              }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
-            >
-              + Nuevo Transportista
-            </button>
-          </div>
           <div className="table-container">
+            <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
+              <h2 style={{ margin: 0, color: '#333' }}>Transportistas</h2>
+              <button
+                onClick={() => setShowTransportistaModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+              >
+                + Nuevo Transportista
+              </button>
+            </div>
             <table>
               <thead>
                 <tr>
@@ -977,10 +972,10 @@ const AdminPanel = () => {
 
       {activeTab === 'equipos' && (
         <div className="content-section">
-          <div className="section-header">
-            <h2>Equipos</h2>
-          </div>
           <div className="table-container">
+            <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
+              <h2 style={{ margin: 0, color: '#333' }}>Equipos</h2>
+            </div>
             <table>
               <thead>
                 <tr>
@@ -1024,28 +1019,28 @@ const AdminPanel = () => {
 
       {activeTab === 'usuarios' && (
         <div className="content-section">
-          <div className="section-header">
-            <h2>Gestión de Usuarios</h2>
-            <button
-              onClick={() => setShowUsuarioModal(true)}
-              style={{
-                padding: '10px 20px',
-                backgroundColor: '#2196F3',
-                color: 'white',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: 'bold',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-              }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
-            >
-              + Nuevo Usuario
-            </button>
-          </div>
           <div className="table-container">
+            <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
+              <h2 style={{ margin: 0, color: '#333' }}>Usuarios</h2>
+              <button
+                onClick={() => setShowUsuarioModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+              >
+                + Nuevo Usuario
+              </button>
+            </div>
             <table>
               <thead>
                 <tr>
