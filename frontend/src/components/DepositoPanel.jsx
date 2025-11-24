@@ -1065,20 +1065,24 @@ const DepositoPanel = () => {
                 style={{
                   backgroundColor: 'white',
                   borderRadius: '8px',
-                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
                   overflow: 'hidden',
+                  border: '1px solid #E0E0E0',
                 }}
               >
                 {/* Encabezado del día - clickeable para expandir/colapsar */}
                 <div
                   style={{
                     padding: '15px 20px',
-                    backgroundColor: dia.esHoy ? '#E8F5E9' : '#F5F5F5',
-                    borderBottom: '2px solid #e0e0e0',
+                    backgroundColor: dia.esHoy ? '#E0F2F1' : '#FFFFFF',
+                    border: dia.esHoy ? '2px solid #0f766e' : '2px solid #E0E0E0',
+                    borderBottom: dia.esHoy ? '2px solid #0f766e' : '2px solid #BDBDBD',
+                    borderRadius: '8px 8px 0 0',
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    transition: 'background-color 0.2s',
+                    transition: 'all 0.2s ease',
+                    boxShadow: dia.esHoy ? '0 2px 4px rgba(15, 118, 110, 0.2)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
                   }}
                 >
                   <div
@@ -1090,8 +1094,26 @@ const DepositoPanel = () => {
                       gap: '15px',
                       flex: 1,
                     }}
-                    onMouseEnter={(e) => e.currentTarget.parentElement.style.backgroundColor = dia.esHoy ? '#C8E6C9' : '#E0E0E0'}
-                    onMouseLeave={(e) => e.currentTarget.parentElement.style.backgroundColor = dia.esHoy ? '#E8F5E9' : '#F5F5F5'}
+                    onMouseEnter={(e) => {
+                      const parent = e.currentTarget.parentElement;
+                      if (dia.esHoy) {
+                        parent.style.backgroundColor = '#B2DFDB';
+                        parent.style.borderColor = '#0d9488';
+                      } else {
+                        parent.style.backgroundColor = '#F5F5F5';
+                        parent.style.borderColor = '#9E9E9E';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      const parent = e.currentTarget.parentElement;
+                      if (dia.esHoy) {
+                        parent.style.backgroundColor = '#E0F2F1';
+                        parent.style.borderColor = '#0f766e';
+                      } else {
+                        parent.style.backgroundColor = '#FFFFFF';
+                        parent.style.borderColor = '#E0E0E0';
+                      }
+                    }}
                   >
                     <span style={{ fontSize: '1.2rem' }}>
                       {diasExpandidos.has(dia.fecha) ? '▼' : '▶'}
@@ -1209,8 +1231,38 @@ const DepositoPanel = () => {
               </div>
             ))}
             {pedidosAgrupadosPorDia.length === 0 && (
-              <div className="no-pedidos">
-                <p>No hay pedidos realizados</p>
+              <div className="no-pedidos" style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '60px 20px',
+                textAlign: 'center',
+                minHeight: '300px',
+              }}>
+                <div style={{
+                  fontSize: '4rem',
+                  marginBottom: '20px',
+                  opacity: 0.3,
+                }}>
+                  ✅
+                </div>
+                <h3 style={{
+                  fontSize: '1.5rem',
+                  fontWeight: '600',
+                  color: '#333',
+                  margin: '0 0 10px 0',
+                }}>
+                  No hay pedidos realizados
+                </h3>
+                <p style={{
+                  fontSize: '1rem',
+                  color: '#666',
+                  margin: '0',
+                  maxWidth: '400px',
+                }}>
+                  Los pedidos completados aparecerán aquí organizados por fecha.
+                </p>
               </div>
             )}
           </div>
@@ -1438,8 +1490,46 @@ const DepositoPanel = () => {
             </div>
           ))}
             {pedidos.length === 0 && !loading && (
-              <div className="no-pedidos">
-                <p>No hay pedidos {filtroEstado.toLowerCase().replace('_', ' ')}</p>
+              <div className="no-pedidos" style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '60px 20px',
+                textAlign: 'center',
+                minHeight: '300px',
+              }}>
+                <div style={{
+                  fontSize: '4rem',
+                  marginBottom: '20px',
+                  opacity: 0.3,
+                }}>
+                  {filtroEstado === 'PENDIENTE' ? '📋' : filtroEstado === 'EN_PROCESO' ? '⚙️' : '✅'}
+                </div>
+                <h3 style={{
+                  fontSize: '1.5rem',
+                  fontWeight: '600',
+                  color: '#333',
+                  margin: '0 0 10px 0',
+                }}>
+                  {filtroEstado === 'PENDIENTE' 
+                    ? 'No hay pedidos pendientes' 
+                    : filtroEstado === 'EN_PROCESO' 
+                    ? 'No hay pedidos en proceso'
+                    : 'No hay pedidos'}
+                </h3>
+                <p style={{
+                  fontSize: '1rem',
+                  color: '#666',
+                  margin: '0',
+                  maxWidth: '400px',
+                }}>
+                  {filtroEstado === 'PENDIENTE' 
+                    ? 'Los nuevos pedidos aparecerán aquí cuando sean creados desde el panel de administración.'
+                    : filtroEstado === 'EN_PROCESO' 
+                    ? 'Los pedidos que estén siendo procesados aparecerán en esta sección.'
+                    : 'No hay pedidos para mostrar en este momento.'}
+                </p>
               </div>
             )}
           </div>
