@@ -53,6 +53,20 @@ const DepositoPanel = () => {
 
   // Ref para rastrear si es la primera carga
   const isInitialLoad = useRef(true);
+  // Ref para el campo del formulario de equipos
+  const grupoNombreRef = useRef(null);
+  // Estado para rastrear el índice del pedido seleccionado en Pendientes
+  const [pedidoSeleccionadoIndex, setPedidoSeleccionadoIndex] = useState(-1);
+  // Estado para saber si estamos en modo navegación de registros
+  const [enModoNavegacionRegistros, setEnModoNavegacionRegistros] = useState(false);
+  // Refs para los selects de "Asignar Equipo" y botones "Procesar"
+  const equipoSelectRefs = useRef({});
+  const procesarButtonRefs = useRef({});
+  // Refs para los botones de "En Proceso" (Volver a Pendiente y Finalizar)
+  const volverPendienteButtonRefs = useRef({});
+  const finalizarButtonRefs = useRef({});
+  // Estado para rastrear qué botón está seleccionado en un pedido de "En Proceso"
+  const [botonSeleccionadoEnProceso, setBotonSeleccionadoEnProceso] = useState({});
 
   // Cargar datos y conectar WebSocket, similar a AdminPanel
   useEffect(() => {
@@ -140,6 +154,395 @@ const DepositoPanel = () => {
       disconnectWebSocket();
     };
   }, [filtroEstado]); // Similar a AdminPanel que usa activeTab
+
+  // Resetear el índice del pedido seleccionado y el modo navegación al cambiar de pestaña
+  useEffect(() => {
+    setPedidoSeleccionadoIndex(-1);
+    setEnModoNavegacionRegistros(false);
+    setBotonSeleccionadoEnProceso({});
+  }, [filtroEstado]);
+
+  // Navegación con flechas entre pestañas y entre pedidos en Pendientes
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // No navegar si hay un modal abierto
+      if (showGrupoModal || showResumenModal) {
+        return;
+      }
+
+      const focusedElement = document.activeElement;
+      const isInputFocused = focusedElement && (
+        focusedElement.tagName === 'INPUT' || 
+        focusedElement.tagName === 'TEXTAREA' || 
+        focusedElement.tagName === 'SELECT' ||
+        focusedElement.isContentEditable
+      );
+
+      const pedidosPendientes = pedidos.filter(p => p.estado === 'PENDIENTE');
+      const pedidosEnProceso = pedidos.filter(p => p.estado === 'EN_PROCESO');
+
+      // Si estamos en Pendientes
+      if (filtroEstado === 'PENDIENTE') {
+        // Si estamos en un select de "Asignar Equipo" y presionamos Enter
+        if (isInputFocused && focusedElement.tagName === 'SELECT') {
+          const selectPedidoId = focusedElement.getAttribute('data-pedido-id');
+          if (event.key === 'Enter' && selectPedidoId) {
+            event.preventDefault();
+            // Hacer click en el botón "Procesar" de ese pedido
+            const procesarButton = procesarButtonRefs.current[selectPedidoId];
+            if (procesarButton) {
+              procesarButton.click();
+            }
+          }
+          return;
+        }
+
+        // Si no estamos en un input/select, manejar navegación entre pedidos
+        if (!isInputFocused) {
+          // Entrar en modo navegación de registros con flecha abajo
+          if (event.key === 'ArrowDown' && pedidosPendientes.length > 0) {
+            event.preventDefault();
+            const nuevoIndex = enModoNavegacionRegistros 
+              ? (pedidoSeleccionadoIndex < pedidosPendientes.length - 1 ? pedidoSeleccionadoIndex + 1 : 0)
+              : 0;
+            setPedidoSeleccionadoIndex(nuevoIndex);
+            setEnModoNavegacionRegistros(true);
+            
+            // Enfocar el card del pedido
+            const pedidoId = pedidosPendientes[nuevoIndex].id;
+            const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+            return;
+          }
+
+          // Si estamos en modo navegación de registros
+          if (enModoNavegacionRegistros && pedidoSeleccionadoIndex >= 0) {
+            // Salir del modo navegación si estamos en el primer registro y presionamos flecha arriba
+            if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0) {
+              event.preventDefault();
+              setEnModoNavegacionRegistros(false);
+              setPedidoSeleccionadoIndex(-1);
+              // Enfocar el botón de la pestaña para que las flechas izquierda/derecha funcionen
+              const tabButton = document.querySelector('.filtros-buttons button.active');
+              if (tabButton) {
+                tabButton.focus();
+              }
+              return;
+            }
+
+            // Navegación entre registros con todas las flechas
+            if (event.key === 'ArrowUp' && pedidosPendientes.length > 0) {
+              event.preventDefault();
+              const nuevoIndex = pedidoSeleccionadoIndex > 0 
+                ? pedidoSeleccionadoIndex - 1 
+                : pedidosPendientes.length - 1;
+              setPedidoSeleccionadoIndex(nuevoIndex);
+              
+              const pedidoId = pedidosPendientes[nuevoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            if (event.key === 'ArrowDown' && pedidosPendientes.length > 0) {
+              event.preventDefault();
+              const nuevoIndex = pedidoSeleccionadoIndex < pedidosPendientes.length - 1 
+                ? pedidoSeleccionadoIndex + 1 
+                : 0;
+              setPedidoSeleccionadoIndex(nuevoIndex);
+              
+              const pedidoId = pedidosPendientes[nuevoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            // Navegación izquierda/derecha entre registros (si hay más de uno)
+            if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosPendientes.length > 1) {
+              event.preventDefault();
+              const nuevoIndex = event.key === 'ArrowLeft'
+                ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosPendientes.length - 1)
+                : (pedidoSeleccionadoIndex < pedidosPendientes.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
+              setPedidoSeleccionadoIndex(nuevoIndex);
+              
+              const pedidoId = pedidosPendientes[nuevoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            // Enter para enfocar el select de "Asignar Equipo"
+            if (event.key === 'Enter' && pedidosPendientes.length > 0) {
+              event.preventDefault();
+              const pedidoId = pedidosPendientes[pedidoSeleccionadoIndex].id;
+              const equipoSelect = equipoSelectRefs.current[pedidoId];
+              if (equipoSelect) {
+                equipoSelect.focus();
+              }
+              return;
+            }
+          }
+        }
+      }
+
+      // Si estamos en En Proceso
+      if (filtroEstado === 'EN_PROCESO') {
+        // PRIMERO: Si estamos en un botón, manejar navegación entre botones y Enter
+        // Verificar si el elemento enfocado es un botón de estos pedidos
+        const buttonPedidoId = focusedElement?.getAttribute('data-pedido-id');
+        const esBotonDePedido = buttonPedidoId && (focusedElement.tagName === 'BUTTON') && 
+          (volverPendienteButtonRefs.current[buttonPedidoId] || finalizarButtonRefs.current[buttonPedidoId]);
+        
+        if (esBotonDePedido) {
+          // Enter en un botón: activarlo
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            focusedElement.click();
+            return;
+          }
+
+          // Flechas izquierda/derecha en un botón: navegar entre botones
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault();
+            event.stopPropagation();
+            // Determinar qué botón está enfocado actualmente
+            const esVolverButton = focusedElement === volverPendienteButtonRefs.current[buttonPedidoId];
+            
+            if (esVolverButton) {
+              // Cambiar al botón Finalizar
+              const finalizarButton = finalizarButtonRefs.current[buttonPedidoId];
+              if (finalizarButton) {
+                setBotonSeleccionadoEnProceso(prev => ({ ...prev, [buttonPedidoId]: 'finalizar' }));
+                finalizarButton.focus();
+              }
+            } else {
+              // Cambiar al botón Volver a Pendiente
+              const volverButton = volverPendienteButtonRefs.current[buttonPedidoId];
+              if (volverButton) {
+                setBotonSeleccionadoEnProceso(prev => ({ ...prev, [buttonPedidoId]: 'volver' }));
+                volverButton.focus();
+              }
+            }
+            return;
+          }
+
+          // Si estamos en un botón y presionamos flechas arriba/abajo, volver al registro
+          if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            event.stopPropagation();
+            const pedidoCard = document.querySelector(`[data-pedido-id="${buttonPedidoId}"]`);
+            if (pedidoCard) {
+              const pedidosFiltrados = pedidosEnProceso;
+              const pedidoIdNum = parseInt(buttonPedidoId);
+              const indexEnFiltrados = pedidosFiltrados.findIndex(p => p.id === pedidoIdNum);
+              if (indexEnFiltrados >= 0) {
+                setPedidoSeleccionadoIndex(indexEnFiltrados);
+                setBotonSeleccionadoEnProceso(prev => {
+                  const nuevo = { ...prev };
+                  delete nuevo[buttonPedidoId];
+                  return nuevo;
+                });
+                pedidoCard.focus();
+              }
+            }
+            return;
+          }
+
+          // Para cualquier otra tecla cuando estamos en un botón, no hacer nada más
+          return;
+        }
+
+        // Si no estamos en un input/select/button, manejar navegación entre pedidos
+        if (!isInputFocused) {
+          // Entrar en modo navegación de registros con flecha abajo
+          if (event.key === 'ArrowDown' && pedidosEnProceso.length > 0) {
+            event.preventDefault();
+            const nuevoIndex = enModoNavegacionRegistros 
+              ? (pedidoSeleccionadoIndex < pedidosEnProceso.length - 1 ? pedidoSeleccionadoIndex + 1 : 0)
+              : 0;
+            setPedidoSeleccionadoIndex(nuevoIndex);
+            setEnModoNavegacionRegistros(true);
+            
+            // Enfocar el card del pedido
+            const pedidoId = pedidosEnProceso[nuevoIndex].id;
+            const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+            return;
+          }
+
+          // Si estamos en modo navegación de registros
+          if (enModoNavegacionRegistros && pedidoSeleccionadoIndex >= 0) {
+            // Salir del modo navegación si estamos en el primer registro y presionamos flecha arriba
+            if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0) {
+              event.preventDefault();
+              setEnModoNavegacionRegistros(false);
+              setPedidoSeleccionadoIndex(-1);
+              setBotonSeleccionadoEnProceso({});
+              // Enfocar el botón de la pestaña para que las flechas izquierda/derecha funcionen
+              const tabButton = document.querySelector('.filtros-buttons button.active');
+              if (tabButton) {
+                tabButton.focus();
+              }
+              return;
+            }
+
+            // Navegación entre registros con todas las flechas
+            if (event.key === 'ArrowUp' && pedidosEnProceso.length > 0) {
+              event.preventDefault();
+              const nuevoIndex = pedidoSeleccionadoIndex > 0 
+                ? pedidoSeleccionadoIndex - 1 
+                : pedidosEnProceso.length - 1;
+              setPedidoSeleccionadoIndex(nuevoIndex);
+              setBotonSeleccionadoEnProceso({});
+              
+              const pedidoId = pedidosEnProceso[nuevoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            if (event.key === 'ArrowDown' && pedidosEnProceso.length > 0) {
+              event.preventDefault();
+              const nuevoIndex = pedidoSeleccionadoIndex < pedidosEnProceso.length - 1 
+                ? pedidoSeleccionadoIndex + 1 
+                : 0;
+              setPedidoSeleccionadoIndex(nuevoIndex);
+              setBotonSeleccionadoEnProceso({});
+              
+              const pedidoId = pedidosEnProceso[nuevoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            // Navegación izquierda/derecha entre registros (si hay más de uno) - solo si NO estamos en un botón
+            const buttonPedidoIdCheck = focusedElement?.getAttribute('data-pedido-id');
+            const esBotonDePedidoCheck = buttonPedidoIdCheck && (focusedElement.tagName === 'BUTTON') && 
+              (volverPendienteButtonRefs.current[buttonPedidoIdCheck] || finalizarButtonRefs.current[buttonPedidoIdCheck]);
+            
+            if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosEnProceso.length > 1 && !esBotonDePedidoCheck) {
+              event.preventDefault();
+              const nuevoIndex = event.key === 'ArrowLeft'
+                ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosEnProceso.length - 1)
+                : (pedidoSeleccionadoIndex < pedidosEnProceso.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
+              setPedidoSeleccionadoIndex(nuevoIndex);
+              setBotonSeleccionadoEnProceso({});
+              
+              const pedidoId = pedidosEnProceso[nuevoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            // Enter para enfocar el primer botón del pedido
+            if (event.key === 'Enter' && pedidosEnProceso.length > 0) {
+              event.preventDefault();
+              const pedidoId = pedidosEnProceso[pedidoSeleccionadoIndex].id;
+              const volverButton = volverPendienteButtonRefs.current[pedidoId];
+              if (volverButton) {
+                // Actualizar el estado antes de enfocar
+                setBotonSeleccionadoEnProceso(prev => ({ ...prev, [pedidoId]: 'volver' }));
+                // Pequeño delay para asegurar que el estado se actualice
+                setTimeout(() => {
+                  volverButton.focus();
+                }, 0);
+              }
+              return;
+            }
+          }
+        }
+      }
+
+      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros)
+      if (!enModoNavegacionRegistros && !isInputFocused) {
+        const tabs = ['PENDIENTE', 'EN_PROCESO', 'REALIZADO', 'EQUIPOS', 'TRANSPORTISTAS'];
+        const currentIndex = tabs.indexOf(filtroEstado);
+
+        if (event.key === 'ArrowLeft' && currentIndex > 0) {
+          event.preventDefault();
+          setFiltroEstado(tabs[currentIndex - 1]);
+          setPedidoSeleccionadoIndex(-1);
+          setEnModoNavegacionRegistros(false);
+        } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
+          event.preventDefault();
+          setFiltroEstado(tabs[currentIndex + 1]);
+          setPedidoSeleccionadoIndex(-1);
+          setEnModoNavegacionRegistros(false);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [filtroEstado, showGrupoModal, showResumenModal, pedidos, pedidoSeleccionadoIndex, enModoNavegacionRegistros]);
+
+  // Agregar listener para abrir modal de crear equipo con Enter cuando esté en la sección de equipos
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      // Solo abrir el modal si no se está escribiendo en un input, textarea o select
+      const target = event.target;
+      const isInputFocused = target.tagName === 'INPUT' || 
+                           target.tagName === 'TEXTAREA' || 
+                           target.tagName === 'SELECT' ||
+                           target.isContentEditable;
+      
+      if (event.key === 'Enter' && !isInputFocused) {
+        if (filtroEstado === 'EQUIPOS' && !showGrupoModal) {
+          event.preventDefault();
+          setShowGrupoModal(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [filtroEstado, showGrupoModal]);
+
+  // Enfocar el campo cuando se abre el modal de crear equipo
+  useEffect(() => {
+    if (showGrupoModal && grupoNombreRef.current) {
+      // Pequeño delay para asegurar que el modal esté completamente renderizado
+      setTimeout(() => {
+        grupoNombreRef.current?.focus();
+      }, 100);
+    }
+  }, [showGrupoModal]);
+
+  // Cerrar modal con ESC
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && showGrupoModal) {
+        setShowGrupoModal(false);
+        setGrupoForm({ nombre: '' });
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showGrupoModal]);
 
   // Función para cargar todos los pedidos para calcular notificaciones
   const cargarTodosLosPedidosParaNotificaciones = async () => {
@@ -1270,8 +1673,26 @@ const DepositoPanel = () => {
 
         {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'EQUIPOS' && filtroEstado !== 'REALIZADO' && (
           <div className="pedidos-grid">
-            {pedidos.filter(pedido => pedido.estado === filtroEstado).map((pedido) => (
-            <div key={pedido.id} className="pedido-card deposito-pedido-card">
+            {pedidos.filter(pedido => pedido.estado === filtroEstado).map((pedido, index) => (
+            <div 
+              key={pedido.id} 
+              className="pedido-card deposito-pedido-card"
+              data-pedido-id={pedido.id}
+              tabIndex={(filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') ? 0 : -1}
+              style={{
+                outline: (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') && pedidoSeleccionadoIndex === index 
+                  ? '3px solid #2196F3' 
+                  : 'none',
+                outlineOffset: (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') && pedidoSeleccionadoIndex === index 
+                  ? '2px' 
+                  : '0',
+              }}
+              onFocus={() => {
+                if (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') {
+                  setPedidoSeleccionadoIndex(index);
+                }
+              }}
+            >
               <div className="pedido-header">
                 <h3>Planilla: {pedido.numeroPlanilla}</h3>
                 <span
@@ -1347,6 +1768,10 @@ const DepositoPanel = () => {
                     <div className="action-group" style={{ position: 'relative' }}>
                       <label>Asignar Equipo:</label>
                       <select
+                        ref={(el) => {
+                          if (el) equipoSelectRefs.current[pedido.id] = el;
+                        }}
+                        data-pedido-id={pedido.id}
                         value={pedido.grupoId || ''}
                         onChange={(e) => {
                           if (e.target.value === 'sin-asignar') {
@@ -1429,6 +1854,9 @@ const DepositoPanel = () => {
                   <div className="action-group">
                     {pedido.estado === 'PENDIENTE' && (
                       <button
+                        ref={(el) => {
+                          if (el) procesarButtonRefs.current[pedido.id] = el;
+                        }}
                         className="btn-primary"
                         onClick={() => handleCambiarEstado(pedido.id, 'EN_PROCESO')}
                         style={{
@@ -1449,6 +1877,10 @@ const DepositoPanel = () => {
                     {pedido.estado === 'EN_PROCESO' && (
                       <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
                         <button
+                          ref={(el) => {
+                            if (el) volverPendienteButtonRefs.current[pedido.id] = el;
+                          }}
+                          data-pedido-id={pedido.id}
                           className="btn-secondary"
                           onClick={() => handleCambiarEstado(pedido.id, 'PENDIENTE')}
                           style={{
@@ -1461,11 +1893,20 @@ const DepositoPanel = () => {
                             cursor: 'pointer',
                             fontSize: '14px',
                             fontWeight: 'bold',
+                            outline: botonSeleccionadoEnProceso[pedido.id] === 'volver' ? '3px solid #2196F3' : 'none',
+                            outlineOffset: botonSeleccionadoEnProceso[pedido.id] === 'volver' ? '2px' : '0',
+                          }}
+                          onFocus={() => {
+                            setBotonSeleccionadoEnProceso({ ...botonSeleccionadoEnProceso, [pedido.id]: 'volver' });
                           }}
                         >
                           Volver a Pendiente
                         </button>
                         <button
+                          ref={(el) => {
+                            if (el) finalizarButtonRefs.current[pedido.id] = el;
+                          }}
+                          data-pedido-id={pedido.id}
                           className="btn-success"
                           onClick={() => handleCambiarEstado(pedido.id, 'REALIZADO')}
                           style={{
@@ -1478,6 +1919,11 @@ const DepositoPanel = () => {
                             cursor: 'pointer',
                             fontSize: '14px',
                             fontWeight: 'bold',
+                            outline: botonSeleccionadoEnProceso[pedido.id] === 'finalizar' ? '3px solid #2196F3' : 'none',
+                            outlineOffset: botonSeleccionadoEnProceso[pedido.id] === 'finalizar' ? '2px' : '0',
+                          }}
+                          onFocus={() => {
+                            setBotonSeleccionadoEnProceso({ ...botonSeleccionadoEnProceso, [pedido.id]: 'finalizar' });
                           }}
                         >
                           Finalizar
@@ -1570,9 +2016,20 @@ const DepositoPanel = () => {
                   Nombre del Equipo
                 </label>
                 <input
+                  ref={grupoNombreRef}
                   type="text"
                   value={grupoForm.nombre}
                   onChange={(e) => setGrupoForm({ nombre: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      // Buscar el botón de submit y hacer click
+                      const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
+                      if (submitButton) {
+                        submitButton.click();
+                      }
+                    }
+                  }}
                   required
                   style={{
                     width: '100%',

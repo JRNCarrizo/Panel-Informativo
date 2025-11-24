@@ -22,6 +22,19 @@ const AdminPanel = () => {
     transportistaId: '',
     prioridad: 'NORMAL',
   });
+  // Refs para los campos del formulario de pedidos
+  const numeroPlanillaRef = useRef(null);
+  const transportistaRef = useRef(null);
+  const prioridadRef = useRef(null);
+  // Refs para los campos del formulario de transportistas
+  const codigoInternoRef = useRef(null);
+  const choferRef = useRef(null);
+  const vehiculoRef = useRef(null);
+  // Refs para los campos del formulario de usuarios
+  const usernameRef = useRef(null);
+  const nombreCompletoRef = useRef(null);
+  const passwordRef = useRef(null);
+  const rolRef = useRef(null);
   const [usuarioForm, setUsuarioForm] = useState({
     username: '',
     password: '',
@@ -202,6 +215,127 @@ const AdminPanel = () => {
       cargarEquipos();
     }
   }, [activeTab]);
+
+  // Agregar listener para abrir modales con Enter cuando esté en la sección correspondiente
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      // Solo abrir el modal si no se está escribiendo en un input, textarea o select
+      const target = event.target;
+      const isInputFocused = target.tagName === 'INPUT' || 
+                           target.tagName === 'TEXTAREA' || 
+                           target.tagName === 'SELECT' ||
+                           target.isContentEditable;
+      
+      if (event.key === 'Enter' && !isInputFocused) {
+        if (activeTab === 'pedidos' && !showModal) {
+          event.preventDefault();
+          setShowModal(true);
+        } else if (activeTab === 'transportistas' && !showTransportistaModal) {
+          event.preventDefault();
+          setShowTransportistaModal(true);
+        } else if (activeTab === 'usuarios' && !showUsuarioModal) {
+          event.preventDefault();
+          setShowUsuarioModal(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [activeTab, showModal, showTransportistaModal, showUsuarioModal]);
+
+  // Enfocar el primer campo cuando se abre el modal de pedidos
+  useEffect(() => {
+    if (showModal && numeroPlanillaRef.current) {
+      // Pequeño delay para asegurar que el modal esté completamente renderizado
+      setTimeout(() => {
+        numeroPlanillaRef.current?.focus();
+      }, 100);
+    }
+  }, [showModal]);
+
+  // Enfocar el primer campo cuando se abre el modal de transportistas
+  useEffect(() => {
+    if (showTransportistaModal && codigoInternoRef.current) {
+      // Pequeño delay para asegurar que el modal esté completamente renderizado
+      setTimeout(() => {
+        codigoInternoRef.current?.focus();
+      }, 100);
+    }
+  }, [showTransportistaModal]);
+
+  // Enfocar el primer campo cuando se abre el modal de usuarios
+  useEffect(() => {
+    if (showUsuarioModal && usernameRef.current) {
+      // Pequeño delay para asegurar que el modal esté completamente renderizado
+      setTimeout(() => {
+        usernameRef.current?.focus();
+      }, 100);
+    }
+  }, [showUsuarioModal]);
+
+  // Cerrar modal con ESC
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        if (showModal) {
+          setShowModal(false);
+          setFormData({ numeroPlanilla: '', transportistaId: '', prioridad: 'NORMAL' });
+        } else if (showTransportistaModal) {
+          setShowTransportistaModal(false);
+          setTransportistaForm({ codigoInterno: '', chofer: '', vehiculo: '' });
+        } else if (showUsuarioModal) {
+          setShowUsuarioModal(false);
+          setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'DEPOSITO' });
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showModal, showTransportistaModal, showUsuarioModal]);
+
+  // Navegación con flechas entre pestañas
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // No navegar si hay un modal abierto o si el usuario está escribiendo
+      if (showModal || showUsuarioModal || showTransportistaModal) {
+        return;
+      }
+
+      // No navegar si el usuario está en un input, textarea o select
+      const focusedElement = document.activeElement;
+      if (focusedElement && (
+        focusedElement.tagName === 'INPUT' || 
+        focusedElement.tagName === 'TEXTAREA' || 
+        focusedElement.tagName === 'SELECT' ||
+        focusedElement.isContentEditable
+      )) {
+        return;
+      }
+
+      const tabs = ['pedidos', 'realizados', 'transportistas', 'usuarios', 'equipos'];
+      const currentIndex = tabs.indexOf(activeTab);
+
+      if (event.key === 'ArrowLeft' && currentIndex > 0) {
+        event.preventDefault();
+        setActiveTab(tabs[currentIndex - 1]);
+      } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
+        event.preventDefault();
+        setActiveTab(tabs[currentIndex + 1]);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeTab, showModal, showUsuarioModal, showTransportistaModal]);
 
   const cargarUsuarios = async () => {
     try {
@@ -1162,21 +1296,35 @@ const AdminPanel = () => {
               <div className="form-group">
                 <label>Número de Planilla</label>
                 <input
+                  ref={numeroPlanillaRef}
                   type="text"
                   value={formData.numeroPlanilla}
                   onChange={(e) =>
                     setFormData({ ...formData, numeroPlanilla: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      transportistaRef.current?.focus();
+                    }
+                  }}
                   required
                 />
               </div>
               <div className="form-group" style={{ position: 'relative' }}>
                 <label>Transportista</label>
                 <select
+                  ref={transportistaRef}
                   value={formData.transportistaId || ''}
                   onChange={(e) =>
                     setFormData({ ...formData, transportistaId: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      prioridadRef.current?.focus();
+                    }
+                  }}
                   onMouseEnter={() => {
                     const transportistasActivos = transportistas.filter(t => t.activo);
                     if (transportistasActivos.length === 0) {
@@ -1242,8 +1390,19 @@ const AdminPanel = () => {
               <div className="form-group">
                 <label>Prioridad</label>
                 <select
+                  ref={prioridadRef}
                   value={formData.prioridad}
                   onChange={(e) => setFormData({ ...formData, prioridad: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      // Buscar el botón de submit y hacer click
+                      const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
+                      if (submitButton) {
+                        submitButton.click();
+                      }
+                    }
+                  }}
                 >
                   <option value="BAJA">Baja</option>
                   <option value="NORMAL">Normal</option>
@@ -1272,43 +1431,75 @@ const AdminPanel = () => {
               <div className="form-group">
                 <label>Usuario</label>
                 <input
+                  ref={usernameRef}
                   type="text"
                   value={usuarioForm.username}
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, username: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      nombreCompletoRef.current?.focus();
+                    }
+                  }}
                   required
                 />
               </div>
               <div className="form-group">
                 <label>Nombre Completo</label>
                 <input
+                  ref={nombreCompletoRef}
                   type="text"
                   value={usuarioForm.nombreCompleto}
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, nombreCompleto: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      passwordRef.current?.focus();
+                    }
+                  }}
                   required
                 />
               </div>
               <div className="form-group">
                 <label>Contraseña</label>
                 <input
+                  ref={passwordRef}
                   type="password"
                   value={usuarioForm.password}
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, password: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      rolRef.current?.focus();
+                    }
+                  }}
                   required
                 />
               </div>
               <div className="form-group">
                 <label>Rol</label>
                 <select
+                  ref={rolRef}
                   value={usuarioForm.rol}
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, rol: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      // Buscar el botón de submit y hacer click
+                      const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
+                      if (submitButton) {
+                        submitButton.click();
+                      }
+                    }
+                  }}
                   required
                 >
                   <option value="DEPOSITO">Depósito</option>
@@ -1340,33 +1531,58 @@ const AdminPanel = () => {
               <div className="form-group">
                 <label>Código Interno</label>
                 <input
+                  ref={codigoInternoRef}
                   type="text"
                   value={transportistaForm.codigoInterno}
                   onChange={(e) =>
                     setTransportistaForm({ ...transportistaForm, codigoInterno: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      choferRef.current?.focus();
+                    }
+                  }}
                   required
                 />
               </div>
               <div className="form-group">
                 <label>Chofer</label>
                 <input
+                  ref={choferRef}
                   type="text"
                   value={transportistaForm.chofer}
                   onChange={(e) =>
                     setTransportistaForm({ ...transportistaForm, chofer: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      vehiculoRef.current?.focus();
+                    }
+                  }}
                   required
                 />
               </div>
               <div className="form-group">
                 <label>Vehículo</label>
                 <input
+                  ref={vehiculoRef}
                   type="text"
                   value={transportistaForm.vehiculo}
                   onChange={(e) =>
                     setTransportistaForm({ ...transportistaForm, vehiculo: e.target.value })
                   }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      // Buscar el botón de submit y hacer click
+                      const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
+                      if (submitButton) {
+                        submitButton.click();
+                      }
+                    }
+                  }}
                   required
                 />
               </div>
