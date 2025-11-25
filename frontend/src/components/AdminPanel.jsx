@@ -523,27 +523,15 @@ const AdminPanel = () => {
   const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [activeTab, pedidos]);
   const pedidosPorDia = useMemo(() => getPedidosPorDia(), [activeTab, pedidos]);
 
-  // Expandir el día de hoy por defecto cuando se carga la sección de realizados
-  // NO marcar como vistos automáticamente - solo cuando el usuario expande explícitamente
+  // Limpiar días expandidos cuando se cambia de pestaña (todos los días cerrados por defecto)
   useEffect(() => {
-    if (activeTab === 'realizados' && pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0) {
-      const hoy = pedidosAgrupadosPorDia.find(dia => dia.esHoy);
-      if (hoy && !hoyColapsadoManualmente.current) {
-        setDiasExpandidos(prev => {
-          if (!prev.has(hoy.fecha)) {
-            // Solo expandir, NO marcar como vistos automáticamente
-            return new Set([...prev, hoy.fecha]);
-          }
-          return prev;
-        });
-      }
-    } else if (activeTab !== 'realizados') {
+    if (activeTab !== 'realizados') {
       // Limpiar días expandidos cuando se cambia de pestaña
       setDiasExpandidos(new Set());
       // Resetear el flag cuando se cambia de pestaña
       hoyColapsadoManualmente.current = false;
     }
-  }, [activeTab, pedidosAgrupadosPorDia]);
+  }, [activeTab]);
 
   const toggleDia = (fecha) => {
     setDiasExpandidos(prev => {
