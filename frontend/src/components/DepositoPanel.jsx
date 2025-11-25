@@ -3,7 +3,9 @@ import { useAuth } from '../context/AuthContext';
 import { pedidoService } from '../services/pedidoService';
 import { grupoService } from '../services/grupoService';
 import { transportistaService } from '../services/transportistaService';
+import { mensajeService } from '../services/mensajeService';
 import { connectWebSocket, disconnectWebSocket } from '../services/websocketService';
+import Chat from './Chat';
 import './DepositoPanel.css';
 
 const DepositoPanel = () => {
@@ -50,6 +52,9 @@ const DepositoPanel = () => {
   // Estado para el tooltip de equipos
   const [showEquipoTooltip, setShowEquipoTooltip] = useState(false);
   const [equipoTooltipPedidoId, setEquipoTooltipPedidoId] = useState(null);
+  // Estado para el chat
+  const [showChat, setShowChat] = useState(false);
+  const [cantidadMensajesNoLeidos, setCantidadMensajesNoLeidos] = useState(0);
 
   // Ref para rastrear si es la primera carga
   const isInitialLoad = useRef(true);
@@ -154,6 +159,26 @@ const DepositoPanel = () => {
       disconnectWebSocket();
     };
   }, [filtroEstado]); // Similar a AdminPanel que usa activeTab
+
+  // Cargar cantidad de mensajes no leídos
+  const actualizarCantidadMensajesNoLeidos = async () => {
+    try {
+      const response = await mensajeService.contarNoLeidos();
+      setCantidadMensajesNoLeidos(response.data || 0);
+    } catch (error) {
+      console.error('Error al contar mensajes no leídos:', error);
+    }
+  };
+
+  // Cargar cantidad de mensajes no leídos al montar y periódicamente
+  useEffect(() => {
+    actualizarCantidadMensajesNoLeidos();
+    const interval = setInterval(() => {
+      actualizarCantidadMensajesNoLeidos();
+    }, 5000); // Cada 5 segundos
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Resetear el índice del pedido seleccionado y el modo navegación al cambiar de pestaña
   useEffect(() => {
@@ -1113,6 +1138,35 @@ const DepositoPanel = () => {
             <span style={{ marginRight: '8px', fontSize: '1.1rem', verticalAlign: 'middle' }}>👤</span>
             {user?.nombreCompleto || user?.username || 'Usuario'}
           </span>
+          <button 
+            onClick={() => setShowChat(!showChat)} 
+            className="btn-chat"
+            style={{ position: 'relative' }}
+          >
+            💬
+            {cantidadMensajesNoLeidos > 0 && (
+              <span 
+                style={{
+                  position: 'absolute',
+                  top: '-8px',
+                  right: '-8px',
+                  backgroundColor: '#F44336',
+                  color: 'white',
+                  borderRadius: '50%',
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                }}
+              >
+                {cantidadMensajesNoLeidos > 99 ? '99+' : cantidadMensajesNoLeidos}
+              </span>
+            )}
+          </button>
           <button onClick={logout} className="btn-logout">
             Salir
           </button>
@@ -2143,6 +2197,17 @@ const DepositoPanel = () => {
           </div>
         </div>
       )}
+      {/* Componente Chat */}
+      {showChat && (
+        <Chat 
+          onClose={() => {
+            setShowChat(false);
+            actualizarCantidadMensajesNoLeidos();
+          }}
+          rolDestinatario={user?.rol === 'ADMIN' ? 'DEPOSITO' : 'ADMIN'}
+        />
+      )}
+
     </div>
   );
 };
