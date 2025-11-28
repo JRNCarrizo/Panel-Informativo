@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" fill="#1e40af" rx="10"/>
+  <g fill="white" opacity="0.9">
+    <!-- Gráfico de barras -->
+    <rect x="20" y="60" width="12" height="25" rx="2"/>
+    <rect x="36" y="50" width="12" height="35" rx="2"/>
+    <rect x="52" y="40" width="12" height="45" rx="2"/>
+    <rect x="68" y="55" width="12" height="30" rx="2"/>
+  </g>
+  <!-- Línea de tendencia -->
+  <polyline points="20,70 36,60 52,50 68,55" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
