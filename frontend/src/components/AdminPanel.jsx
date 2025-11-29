@@ -5,6 +5,7 @@ import { usuarioService } from '../services/usuarioService';
 import { transportistaService } from '../services/transportistaService';
 import { grupoService } from '../services/grupoService';
 import { mensajeService } from '../services/mensajeService';
+import { zonaService } from '../services/zonaService';
 import { connectWebSocket, disconnectWebSocket } from '../services/websocketService';
 import Chat from './Chat';
 import './AdminPanel.css';
@@ -15,18 +16,28 @@ const AdminPanel = () => {
   const [usuarios, setUsuarios] = useState([]);
   const [transportistas, setTransportistas] = useState([]);
   const [equipos, setEquipos] = useState([]);
+  const [zonas, setZonas] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showUsuarioModal, setShowUsuarioModal] = useState(false);
   const [showTransportistaModal, setShowTransportistaModal] = useState(false);
+  const [showZonaModal, setShowZonaModal] = useState(false);
+  const [zonaEditando, setZonaEditando] = useState(null);
   const [showTransportistaTooltip, setShowTransportistaTooltip] = useState(false);
   const [formData, setFormData] = useState({
     numeroPlanilla: '',
     transportistaId: '',
+    zonaNombre: '',
     prioridad: 'NORMAL',
   });
+  const [zonaSugerencias, setZonaSugerencias] = useState([]);
+  const [mostrarSugerenciasZona, setMostrarSugerenciasZona] = useState(false);
+  const [indiceZonaSeleccionada, setIndiceZonaSeleccionada] = useState(-1);
+  const zonaInputRef = useRef(null);
+  const zonaSugerenciasRef = useRef(null);
   // Refs para los campos del formulario de pedidos
   const numeroPlanillaRef = useRef(null);
   const transportistaRef = useRef(null);
+  const zonaRef = useRef(null);
   const prioridadRef = useRef(null);
   // Refs para los campos del formulario de transportistas
   const codigoInternoRef = useRef(null);
@@ -49,6 +60,10 @@ const AdminPanel = () => {
     chofer: '',
     vehiculo: '',
   });
+  const [zonaForm, setZonaForm] = useState({
+    nombre: '',
+  });
+  const zonaNombreRef = useRef(null);
   const [activeTab, setActiveTab] = useState('pedidos');
   // Estado para el modal de resumen
   const [showResumenModal, setShowResumenModal] = useState(false);
@@ -137,6 +152,10 @@ const AdminPanel = () => {
     cargarEquipos().catch(err => {
       console.warn('Error al cargar equipos (puede ser normal si el backend no se reinició):', err);
     });
+    // Cargar zonas en paralelo pero no esperar si falla
+    cargarZonas().catch(err => {
+      console.warn('Error al cargar zonas (puede ser normal si el backend no se reinició):', err);
+    });
     // Cargar ID del primer admin
     cargarIdPrimerAdmin();
   };
@@ -179,6 +198,19 @@ const AdminPanel = () => {
     }
   };
 
+  const cargarZonas = async () => {
+    try {
+      const response = await zonaService.obtenerTodas();
+      setZonas(response.data || []);
+    } catch (error) {
+      console.error('Error al cargar zonas:', error);
+      if (error.response?.status === 403) {
+        console.warn('Error 403 al cargar zonas. Verifica que el backend esté corriendo y que tengas sesión activa.');
+      }
+      setZonas([]);
+    }
+  };
+
   const cargarPedidos = async () => {
     try {
       if (activeTab === 'realizados') {
@@ -216,8 +248,10 @@ const AdminPanel = () => {
     if (activeTab === 'pedidos' || activeTab === 'realizados') {
       setPedidos([]);
       cargarSegunPestaña();
-    } else if (activeTab === 'equipos') {
+        } else if (activeTab === 'equipos') {
       cargarEquipos();
+    } else if (activeTab === 'zonas') {
+      cargarZonas();
     }
   }, [activeTab]);
 
@@ -241,6 +275,9 @@ const AdminPanel = () => {
         } else if (activeTab === 'usuarios' && !showUsuarioModal) {
           event.preventDefault();
           setShowUsuarioModal(true);
+        } else if (activeTab === 'zonas' && !showZonaModal) {
+          event.preventDefault();
+          setShowZonaModal(true);
         }
       }
     };
@@ -282,6 +319,20 @@ const AdminPanel = () => {
     }
   }, [showUsuarioModal]);
 
+  // Enfocar el primer campo cuando se abre el modal de zonas
+  useEffect(() => {
+    if (showZonaModal && zonaNombreRef.current) {
+      // Pequeño delay para asegurar que el modal esté completamente renderizado
+      setTimeout(() => {
+        zonaNombreRef.current?.focus();
+        // Seleccionar todo el texto si está editando
+        if (zonaEditando) {
+          zonaNombreRef.current?.select();
+        }
+      }, 100);
+    }
+  }, [showZonaModal, zonaEditando]);
+
   // Cargar cantidad de mensajes no leídos
   const actualizarCantidadMensajesNoLeidos = async () => {
     try {
@@ -315,8 +366,14 @@ const AdminPanel = () => {
         } else if (showUsuarioModal) {
           setShowUsuarioModal(false);
           setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'DEPOSITO' });
+        } else if (showZonaModal) {
+          setShowZonaModal(false);
+          setZonaForm({ nombre: '' });
+          setZonaEditando(null);
         } else if (showChat) {
           setShowChat(false);
+        } else if (mostrarSugerenciasZona) {
+          setMostrarSugerenciasZona(false);
         }
       }
     };
@@ -331,7 +388,7 @@ const AdminPanel = () => {
   useEffect(() => {
     const handleKeyDown = (event) => {
       // No navegar si hay un modal abierto o si el usuario está escribiendo
-      if (showModal || showUsuarioModal || showTransportistaModal) {
+      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal) {
         return;
       }
 
@@ -346,7 +403,7 @@ const AdminPanel = () => {
         return;
       }
 
-      const tabs = ['pedidos', 'realizados', 'transportistas', 'usuarios', 'equipos'];
+      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'usuarios', 'equipos'];
       const currentIndex = tabs.indexOf(activeTab);
 
       if (event.key === 'ArrowLeft' && currentIndex > 0) {
@@ -373,13 +430,50 @@ const AdminPanel = () => {
     }
   };
 
+  const buscarZonas = async (busqueda) => {
+    if (busqueda.trim().length === 0) {
+      setZonaSugerencias([]);
+      setMostrarSugerenciasZona(false);
+      setIndiceZonaSeleccionada(-1);
+      return;
+    }
+    try {
+      const response = await zonaService.buscar(busqueda);
+      setZonaSugerencias(response.data || []);
+      setMostrarSugerenciasZona(true);
+      setIndiceZonaSeleccionada(-1); // Resetear índice al buscar
+    } catch (error) {
+      console.error('Error al buscar zonas:', error);
+      setZonaSugerencias([]);
+      setIndiceZonaSeleccionada(-1);
+    }
+  };
+
+  const handleZonaInputChange = (e) => {
+    const valor = e.target.value;
+    setFormData({ ...formData, zonaNombre: valor });
+    buscarZonas(valor);
+    setIndiceZonaSeleccionada(-1); // Resetear índice al escribir
+  };
+
+  const seleccionarZona = (zonaNombre) => {
+    setFormData({ ...formData, zonaNombre });
+    setZonaSugerencias([]);
+    setMostrarSugerenciasZona(false);
+    setIndiceZonaSeleccionada(-1);
+  };
+
   const handleCrearPedido = async (e) => {
     e.preventDefault();
     try {
       await pedidoService.crear(formData);
       setShowModal(false);
-      setFormData({ numeroPlanilla: '', transportistaId: '', prioridad: 'NORMAL' });
+      setFormData({ numeroPlanilla: '', transportistaId: '', zonaNombre: '', prioridad: 'NORMAL' });
+      setZonaSugerencias([]);
+      setMostrarSugerenciasZona(false);
       cargarPedidos();
+      // Recargar zonas por si se creó una nueva
+      cargarZonas();
     } catch (error) {
       alert(error.response?.data || 'Error al crear pedido');
     }
@@ -399,6 +493,40 @@ const AdminPanel = () => {
     } catch (error) {
       alert(error.response?.data || 'Error al crear transportista');
     }
+  };
+
+  const handleCrearZona = async (e) => {
+    e.preventDefault();
+    try {
+      await zonaService.crearObtener(zonaForm.nombre.trim());
+      setShowZonaModal(false);
+      setZonaForm({ nombre: '' });
+      setZonaEditando(null);
+      cargarZonas();
+      alert('Zona creada exitosamente');
+    } catch (error) {
+      alert(error.response?.data || 'Error al crear zona');
+    }
+  };
+
+  const handleEditarZona = async (e) => {
+    e.preventDefault();
+    try {
+      await zonaService.actualizar(zonaEditando.id, zonaForm.nombre.trim(), null);
+      setShowZonaModal(false);
+      setZonaForm({ nombre: '' });
+      setZonaEditando(null);
+      cargarZonas();
+      alert('Zona actualizada exitosamente');
+    } catch (error) {
+      alert(error.response?.data || 'Error al actualizar zona');
+    }
+  };
+
+  const abrirModalEditarZona = (zona) => {
+    setZonaEditando(zona);
+    setZonaForm({ nombre: zona.nombre });
+    setShowZonaModal(true);
   };
 
   const handleEliminarPedido = async (id) => {
@@ -578,25 +706,16 @@ const AdminPanel = () => {
     <div className="admin-panel">
       <header className="admin-header">
         <h1>
-          <svg 
-            width="32" 
-            height="32" 
-            viewBox="0 0 100 100" 
+          <img 
+            src="/logo-empresa.png" 
+            alt="Logo Empresa" 
             style={{ 
+              height: '40px',
               marginRight: '12px',
               verticalAlign: 'middle',
               display: 'inline-block'
-            }}
-          >
-            <rect width="100" height="100" fill="rgba(255, 255, 255, 0.2)" rx="10"/>
-            <g fill="white" opacity="0.95">
-              <rect x="20" y="60" width="12" height="25" rx="2"/>
-              <rect x="36" y="50" width="12" height="35" rx="2"/>
-              <rect x="52" y="40" width="12" height="45" rx="2"/>
-              <rect x="68" y="55" width="12" height="30" rx="2"/>
-            </g>
-            <polyline points="20,70 36,60 52,50 68,55" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity="0.95"/>
-          </svg>
+            }} 
+          />
           Panel de Administración
         </h1>
         <div className="user-info">
@@ -682,6 +801,12 @@ const AdminPanel = () => {
           Transportistas
         </button>
         <button
+          className={activeTab === 'zonas' ? 'active' : ''}
+          onClick={() => setActiveTab('zonas')}
+        >
+          Zonas
+        </button>
+        <button
           className={activeTab === 'usuarios' ? 'active' : ''}
           onClick={() => setActiveTab('usuarios')}
         >
@@ -747,6 +872,11 @@ const AdminPanel = () => {
                       </div>
                     )}
                   </div>
+                  {pedido.zonaNombre && (
+                    <p>
+                      <strong>Zona:</strong> {pedido.zonaNombre}
+                    </p>
+                  )}
                   <p>
                     <strong>Estado:</strong>{' '}
                     <span
@@ -973,6 +1103,11 @@ const AdminPanel = () => {
                                 </div>
                               )}
                             </div>
+                            {pedido.zonaNombre && (
+                              <p>
+                                <strong>Zona:</strong> {pedido.zonaNombre}
+                              </p>
+                            )}
                             <p>
                               <strong>Equipo Asignado:</strong> {pedido.grupoNombre || 'Sin asignar'}
                             </p>
@@ -1195,6 +1330,128 @@ const AdminPanel = () => {
         </div>
       )}
 
+      {activeTab === 'zonas' && (
+        <div className="content-section">
+          <div className="table-container">
+            <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
+              <h2 style={{ margin: 0, color: '#333' }}>Zonas</h2>
+              <button
+                onClick={() => setShowZonaModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+              >
+                + Nueva Zona
+              </button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {zonas.length === 0 ? (
+                  <tr>
+                    <td colSpan="3" style={{ textAlign: 'center', padding: '20px' }}>
+                      No hay zonas registradas
+                    </td>
+                  </tr>
+                ) : (
+                  zonas.map((zona) => (
+                    <tr key={zona.id}>
+                      <td>{zona.nombre}</td>
+                      <td>
+                        <span style={{
+                          padding: '4px 12px',
+                          borderRadius: '12px',
+                          fontSize: '0.85em',
+                          fontWeight: 'bold',
+                          backgroundColor: zona.activo ? '#E8F5E9' : '#FFEBEE',
+                          color: zona.activo ? '#2E7D32' : '#C62828'
+                        }}>
+                          {zona.activo ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <button
+                            className="btn-secondary"
+                            style={{ 
+                              backgroundColor: '#2196F3', 
+                              color: 'white',
+                              padding: '6px 12px',
+                              fontSize: '13px',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontWeight: 'bold'
+                            }}
+                            onClick={() => abrirModalEditarZona(zona)}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+                          >
+                            Editar
+                          </button>
+                          {zona.activo ? (
+                            <button
+                              className="btn-danger"
+                              onClick={async () => {
+                                if (window.confirm('¿Estás seguro de que deseas desactivar esta zona?\n\nLa zona se desactivará y no aparecerá como opción al crear pedidos, pero se mantendrá en el sistema para conservar los registros históricos.')) {
+                                  try {
+                                    await zonaService.actualizar(zona.id, null, false);
+                                    cargarZonas();
+                                    alert('Zona desactivada exitosamente');
+                                  } catch (error) {
+                                    alert(error.response?.data || 'Error al desactivar zona');
+                                  }
+                                }
+                              }}
+                            >
+                              Desactivar
+                            </button>
+                          ) : (
+                            <button
+                              className="btn-secondary"
+                              style={{ backgroundColor: '#667eea', color: 'white' }}
+                              onClick={async () => {
+                                if (window.confirm('¿Estás seguro de que deseas activar esta zona?\n\nLa zona volverá a aparecer como opción al crear pedidos.')) {
+                                  try {
+                                    await zonaService.actualizar(zona.id, null, true);
+                                    cargarZonas();
+                                    alert('Zona activada exitosamente');
+                                  } catch (error) {
+                                    alert(error.response?.data || 'Error al activar zona');
+                                  }
+                                }
+                              }}
+                            >
+                              Activar
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'usuarios' && (
         <div className="content-section">
           <div className="table-container">
@@ -1333,7 +1590,12 @@ const AdminPanel = () => {
       )}
 
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+        <div className="modal-overlay" onClick={() => {
+          setShowModal(false);
+          setFormData({ numeroPlanilla: '', transportistaId: '', zonaNombre: '', prioridad: 'NORMAL' });
+          setZonaSugerencias([]);
+          setMostrarSugerenciasZona(false);
+        }}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Nuevo Pedido</h3>
             <form onSubmit={handleCrearPedido}>
@@ -1366,7 +1628,7 @@ const AdminPanel = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      prioridadRef.current?.focus();
+                      zonaRef.current?.focus();
                     }
                   }}
                   onMouseEnter={() => {
@@ -1431,6 +1693,120 @@ const AdminPanel = () => {
                   </div>
                 )}
               </div>
+              <div className="form-group" style={{ position: 'relative' }}>
+                <label>Zona</label>
+                <input
+                  ref={zonaRef}
+                  type="text"
+                  value={formData.zonaNombre}
+                  onChange={handleZonaInputChange}
+                  onKeyDown={(e) => {
+                    if (mostrarSugerenciasZona && zonaSugerencias.length > 0) {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        const nuevoIndice = indiceZonaSeleccionada < zonaSugerencias.length - 1 
+                          ? indiceZonaSeleccionada + 1 
+                          : 0;
+                        setIndiceZonaSeleccionada(nuevoIndice);
+                        // Scroll automático para mantener visible la opción seleccionada
+                        setTimeout(() => {
+                          const elemento = document.querySelector(`[data-zona-index="${nuevoIndice}"]`);
+                          if (elemento && zonaSugerenciasRef.current) {
+                            elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                          }
+                        }, 0);
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const nuevoIndice = indiceZonaSeleccionada > 0 
+                          ? indiceZonaSeleccionada - 1 
+                          : zonaSugerencias.length - 1;
+                        setIndiceZonaSeleccionada(nuevoIndice);
+                        // Scroll automático para mantener visible la opción seleccionada
+                        setTimeout(() => {
+                          const elemento = document.querySelector(`[data-zona-index="${nuevoIndice}"]`);
+                          if (elemento && zonaSugerenciasRef.current) {
+                            elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                          }
+                        }, 0);
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (indiceZonaSeleccionada >= 0 && indiceZonaSeleccionada < zonaSugerencias.length) {
+                          seleccionarZona(zonaSugerencias[indiceZonaSeleccionada].nombre);
+                        } else if (zonaSugerencias.length > 0) {
+                          seleccionarZona(zonaSugerencias[0].nombre);
+                        }
+                        prioridadRef.current?.focus();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setMostrarSugerenciasZona(false);
+                        setIndiceZonaSeleccionada(-1);
+                      }
+                    } else if (e.key === 'Enter' && !mostrarSugerenciasZona) {
+                      e.preventDefault();
+                      prioridadRef.current?.focus();
+                    }
+                  }}
+                  onFocus={() => {
+                    if (formData.zonaNombre) {
+                      buscarZonas(formData.zonaNombre);
+                    }
+                    setIndiceZonaSeleccionada(-1); // Resetear índice al enfocar
+                  }}
+                  onBlur={() => {
+                    // Delay para permitir click en sugerencias
+                    setTimeout(() => {
+                      setMostrarSugerenciasZona(false);
+                      setIndiceZonaSeleccionada(-1);
+                    }, 200);
+                  }}
+                  placeholder="Escribir zona (se guardará automáticamente)"
+                  style={{ width: '100%', padding: '12px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '1rem', boxSizing: 'border-box' }}
+                />
+                {mostrarSugerenciasZona && zonaSugerencias.length > 0 && (
+                  <div 
+                    ref={zonaSugerenciasRef}
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'white',
+                      border: '1px solid #ddd',
+                      borderRadius: '5px',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      zIndex: 1000,
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                      marginTop: '4px'
+                    }}
+                    onMouseDown={(e) => e.preventDefault()} // Prevenir blur del input al hacer click
+                  >
+                    {zonaSugerencias.map((zona, index) => (
+                      <div
+                        key={zona.id}
+                        data-zona-index={index}
+                        onClick={() => seleccionarZona(zona.nombre)}
+                        onMouseEnter={() => setIndiceZonaSeleccionada(index)}
+                        style={{
+                          padding: '10px 15px',
+                          cursor: 'pointer',
+                          borderBottom: index === zonaSugerencias.length - 1 ? 'none' : '1px solid #eee',
+                          transition: 'background-color 0.15s, color 0.15s',
+                          backgroundColor: index === indiceZonaSeleccionada ? '#2563eb' : 'white',
+                          color: index === indiceZonaSeleccionada ? 'white' : '#333',
+                          fontWeight: index === indiceZonaSeleccionada ? '600' : 'normal',
+                          borderRadius: index === 0 ? '5px 5px 0 0' : index === zonaSugerencias.length - 1 ? '0 0 5px 5px' : '0'
+                        }}
+                        onMouseLeave={() => {
+                          // No resetear el índice al salir del mouse si hay una selección activa
+                        }}
+                      >
+                        {zona.nombre}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="form-group">
                 <label>Prioridad</label>
                 <select
@@ -1458,7 +1834,12 @@ const AdminPanel = () => {
                 <button type="submit" className="btn-primary">
                   Crear
                 </button>
-                <button type="button" onClick={() => setShowModal(false)} className="btn-secondary">
+                <button type="button" onClick={() => {
+                  setShowModal(false);
+                  setFormData({ numeroPlanilla: '', transportistaId: '', zonaNombre: '', prioridad: 'NORMAL' });
+                  setZonaSugerencias([]);
+                  setMostrarSugerenciasZona(false);
+                }} className="btn-secondary">
                   Cancelar
                 </button>
               </div>
@@ -1650,6 +2031,57 @@ const AdminPanel = () => {
         </div>
       )}
 
+      {showZonaModal && (
+        <div className="modal-overlay" onClick={() => {
+          setShowZonaModal(false);
+          setZonaForm({ nombre: '' });
+          setZonaEditando(null);
+        }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{zonaEditando ? 'Editar Zona' : 'Nueva Zona'}</h3>
+            <form onSubmit={zonaEditando ? handleEditarZona : handleCrearZona}>
+              <div className="form-group">
+                <label>Nombre de la Zona</label>
+                <input
+                  ref={zonaNombreRef}
+                  type="text"
+                  value={zonaForm.nombre}
+                  onChange={(e) => setZonaForm({ nombre: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      // Buscar el botón de submit y hacer click
+                      const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
+                      if (submitButton) {
+                        submitButton.click();
+                      }
+                    }
+                  }}
+                  required
+                  placeholder="Ej: Zona Norte, Zona Sur..."
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="btn-primary">
+                  {zonaEditando ? 'Guardar' : 'Crear'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowZonaModal(false);
+                    setZonaForm({ nombre: '' });
+                    setZonaEditando(null);
+                  }}
+                  className="btn-secondary"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Resumen */}
       {showResumenModal && (
         <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
@@ -1664,12 +2096,13 @@ const AdminPanel = () => {
                   <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Número de Planilla</th>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transportista</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Zona</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pedidosResumen.length === 0 ? (
                     <tr>
-                      <td colSpan="2" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                      <td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                         No hay planillas para este día
                       </td>
                     </tr>
@@ -1694,6 +2127,9 @@ const AdminPanel = () => {
                               {pedido.transportista || 'Sin transportista'}
                             </span>
                           )}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
+                          {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
                         </td>
                       </tr>
                     ))

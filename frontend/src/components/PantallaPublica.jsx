@@ -246,7 +246,18 @@ const PantallaPublica = () => {
             </div>
           </div>
           <div style={{ flex: 1, textAlign: 'center' }}>
-            <h1>PANEL CENTRAL</h1>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '15px', marginBottom: '8px' }}>
+              <img 
+                src="/logo-empresa.png" 
+                alt="Logo Empresa" 
+                style={{ 
+                  height: 'clamp(40px, 5vw, 60px)',
+                  maxWidth: '200px',
+                  objectFit: 'contain'
+                }} 
+              />
+              <h1 style={{ margin: 0 }}>PANEL CENTRAL</h1>
+            </div>
             <div className="fecha-hora">
               {horaActual.toLocaleString('es-AR', {
                 weekday: 'long',

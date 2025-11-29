@@ -80,11 +80,11 @@ const Login = () => {
           alignItems: 'center'
         }}>
           <img 
-            src="/favicon.svg" 
-            alt="Visor Central" 
+            src="/logo-empresa.png" 
+            alt="Logo Empresa" 
             style={{ 
-              width: '80px', 
-              height: '80px',
+              maxWidth: '200px', 
+              height: 'auto',
               filter: 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2))'
             }} 
           />

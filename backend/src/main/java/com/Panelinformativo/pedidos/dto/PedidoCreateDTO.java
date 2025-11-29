@@ -15,6 +15,8 @@ public class PedidoCreateDTO {
 
     private Long transportistaId;
 
+    private String zonaNombre; // Nombre de la zona (se creará/obtendrá automáticamente)
+
     private Pedido.Prioridad prioridad = Pedido.Prioridad.NORMAL;
 }
 

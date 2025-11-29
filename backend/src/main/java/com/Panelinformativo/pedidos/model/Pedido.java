@@ -3,6 +3,7 @@ package com.Panelinformativo.pedidos.model;
 import com.Panelinformativo.grupos.model.Grupo;
 import com.Panelinformativo.transportistas.model.Transportista;
 import com.Panelinformativo.usuarios.model.Usuario;
+import com.Panelinformativo.zonas.model.Zona;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -38,6 +39,10 @@ public class Pedido {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "grupo_id")
     private Grupo grupoAsignado;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "zona_id")
+    private Zona zona;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "usuario_creador_id", nullable = false)

@@ -9,6 +9,8 @@ import com.Panelinformativo.pedidos.repository.PedidoRepository;
 import com.Panelinformativo.transportistas.model.Transportista;
 import com.Panelinformativo.transportistas.repository.TransportistaRepository;
 import com.Panelinformativo.usuarios.model.Usuario;
+import com.Panelinformativo.zonas.model.Zona;
+import com.Panelinformativo.zonas.service.ZonaService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +24,7 @@ public class PedidoService {
     private final PedidoRepository pedidoRepository;
     private final GrupoRepository grupoRepository;
     private final TransportistaRepository transportistaRepository;
+    private final ZonaService zonaService;
 
     @Transactional
     public PedidoDTO crearPedido(PedidoCreateDTO dto, Usuario usuarioCreador) {
@@ -36,9 +39,16 @@ public class PedidoService {
         Transportista transportista = transportistaRepository.findById(dto.getTransportistaId())
                 .orElseThrow(() -> new IllegalArgumentException("Transportista no encontrado"));
 
+        // Crear u obtener zona si se proporciona
+        Zona zona = null;
+        if (dto.getZonaNombre() != null && !dto.getZonaNombre().trim().isEmpty()) {
+            zona = zonaService.crearObtenerZonaEntity(dto.getZonaNombre().trim());
+        }
+
         Pedido pedido = new Pedido();
         pedido.setNumeroPlanilla(dto.getNumeroPlanilla());
         pedido.setTransportista(transportista);
+        pedido.setZona(zona);
         pedido.setPrioridad(dto.getPrioridad() != null ? dto.getPrioridad() : Pedido.Prioridad.NORMAL);
         pedido.setEstado(Pedido.EstadoPedido.PENDIENTE);
         pedido.setUsuarioCreador(usuarioCreador);
@@ -125,6 +135,15 @@ public class PedidoService {
                     .orElseThrow(() -> new IllegalArgumentException("Transportista no encontrado"));
             pedido.setTransportista(transportista);
         }
+
+        // Actualizar zona si se proporciona
+        if (dto.getZonaNombre() != null && !dto.getZonaNombre().trim().isEmpty()) {
+            Zona zona = zonaService.crearObtenerZonaEntity(dto.getZonaNombre().trim());
+            pedido.setZona(zona);
+        } else if (dto.getZonaNombre() != null && dto.getZonaNombre().trim().isEmpty()) {
+            // Si se envía vacío, quitar la zona
+            pedido.setZona(null);
+        }
         
         pedido.setPrioridad(dto.getPrioridad() != null ? dto.getPrioridad() : Pedido.Prioridad.NORMAL);
 
@@ -166,6 +185,11 @@ public class PedidoService {
         if (pedido.getGrupoAsignado() != null) {
             dto.setGrupoId(pedido.getGrupoAsignado().getId());
             dto.setGrupoNombre(pedido.getGrupoAsignado().getNombre());
+        }
+
+        if (pedido.getZona() != null) {
+            dto.setZonaId(pedido.getZona().getId());
+            dto.setZonaNombre(pedido.getZona().getNombre());
         }
 
         return dto;

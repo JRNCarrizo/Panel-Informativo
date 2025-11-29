@@ -1112,25 +1112,16 @@ const DepositoPanel = () => {
     <div className="deposito-panel">
       <header className="deposito-header">
         <h1>
-          <svg 
-            width="32" 
-            height="32" 
-            viewBox="0 0 100 100" 
+          <img 
+            src="/logo-empresa.png" 
+            alt="Logo Empresa" 
             style={{ 
+              height: '40px',
               marginRight: '12px',
               verticalAlign: 'middle',
               display: 'inline-block'
-            }}
-          >
-            <rect width="100" height="100" fill="rgba(255, 255, 255, 0.2)" rx="10"/>
-            <g fill="white" opacity="0.95">
-              <rect x="20" y="60" width="12" height="25" rx="2"/>
-              <rect x="36" y="50" width="12" height="35" rx="2"/>
-              <rect x="52" y="40" width="12" height="45" rx="2"/>
-              <rect x="68" y="55" width="12" height="30" rx="2"/>
-            </g>
-            <polyline points="20,70 36,60 52,50 68,55" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity="0.95"/>
-          </svg>
+            }} 
+          />
           Panel de Depósito
         </h1>
         <div className="user-info">
@@ -1649,6 +1640,11 @@ const DepositoPanel = () => {
                               </div>
                             )}
                           </div>
+                          {pedido.zonaNombre && (
+                            <p>
+                              <strong>Zona:</strong> {pedido.zonaNombre}
+                            </p>
+                          )}
                           <p>
                             <strong>Equipo Asignado:</strong>{' '}
                             {pedido.grupoNombre || 'Sin asignar'}
@@ -1774,6 +1770,11 @@ const DepositoPanel = () => {
                     </div>
                   )}
                 </div>
+                {pedido.zonaNombre && (
+                  <p>
+                    <strong>Zona:</strong> {pedido.zonaNombre}
+                  </p>
+                )}
                 <p>
                   <strong>Estado:</strong>{' '}
                   <span
@@ -2148,12 +2149,13 @@ const DepositoPanel = () => {
                   <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Número de Planilla</th>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transportista</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Zona</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pedidosResumen.length === 0 ? (
                     <tr>
-                      <td colSpan="2" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                      <td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                         No hay planillas para este día
                       </td>
                     </tr>
@@ -2178,6 +2180,9 @@ const DepositoPanel = () => {
                               {pedido.transportista || 'Sin transportista'}
                             </span>
                           )}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
+                          {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
                         </td>
                       </tr>
                     ))

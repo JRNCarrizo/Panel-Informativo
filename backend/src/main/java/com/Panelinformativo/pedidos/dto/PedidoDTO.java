@@ -22,6 +22,8 @@ public class PedidoDTO {
     private Pedido.EstadoPedido estado;
     private Long grupoId;
     private String grupoNombre;
+    private Long zonaId;
+    private String zonaNombre;
     private String usuarioCreadorNombre;
     private LocalDateTime fechaCreacion;
     private LocalDateTime fechaActualizacion;
