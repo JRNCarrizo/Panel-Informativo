@@ -7,10 +7,12 @@ import com.Panelinformativo.pedidos.dto.PedidoDTO;
 import com.Panelinformativo.pedidos.model.Pedido;
 import com.Panelinformativo.pedidos.repository.PedidoRepository;
 import com.Panelinformativo.transportistas.model.Transportista;
-import com.Panelinformativo.transportistas.repository.TransportistaRepository;
+import com.Panelinformativo.transportistas.service.TransportistaService;
 import com.Panelinformativo.usuarios.model.Usuario;
 import com.Panelinformativo.zonas.model.Zona;
 import com.Panelinformativo.zonas.service.ZonaService;
+import com.Panelinformativo.vueltas.model.Vuelta;
+import com.Panelinformativo.vueltas.service.VueltaService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,8 +25,9 @@ import java.util.stream.Collectors;
 public class PedidoService {
     private final PedidoRepository pedidoRepository;
     private final GrupoRepository grupoRepository;
-    private final TransportistaRepository transportistaRepository;
+    private final TransportistaService transportistaService;
     private final ZonaService zonaService;
+    private final VueltaService vueltaService;
 
     @Transactional
     public PedidoDTO crearPedido(PedidoCreateDTO dto, Usuario usuarioCreador) {
@@ -32,23 +35,36 @@ public class PedidoService {
             throw new IllegalArgumentException("Ya existe un pedido con ese número de planilla");
         }
 
-        if (dto.getTransportistaId() == null) {
-            throw new IllegalArgumentException("El transportista es obligatorio");
+        if (dto.getTransportistaNombre() == null || dto.getTransportistaNombre().trim().isEmpty()) {
+            throw new IllegalArgumentException("El transporte es obligatorio");
         }
 
-        Transportista transportista = transportistaRepository.findById(dto.getTransportistaId())
-                .orElseThrow(() -> new IllegalArgumentException("Transportista no encontrado"));
+        if (dto.getCantidad() == null || dto.getCantidad() <= 0) {
+            throw new IllegalArgumentException("La cantidad es obligatoria y debe ser mayor a 0");
+        }
 
-        // Crear u obtener zona si se proporciona
+        if (dto.getVueltaNombre() == null || dto.getVueltaNombre().trim().isEmpty()) {
+            throw new IllegalArgumentException("La vuelta es obligatoria");
+        }
+
+        // Crear u obtener transporte (obligatorio)
+        Transportista transportista = transportistaService.crearObtenerTransportistaEntity(dto.getTransportistaNombre().trim());
+
+        // Crear u obtener zona si se proporciona (opcional)
         Zona zona = null;
         if (dto.getZonaNombre() != null && !dto.getZonaNombre().trim().isEmpty()) {
             zona = zonaService.crearObtenerZonaEntity(dto.getZonaNombre().trim());
         }
 
+        // Crear u obtener vuelta (obligatoria)
+        Vuelta vuelta = vueltaService.crearObtenerVueltaEntity(dto.getVueltaNombre().trim());
+
         Pedido pedido = new Pedido();
         pedido.setNumeroPlanilla(dto.getNumeroPlanilla());
         pedido.setTransportista(transportista);
         pedido.setZona(zona);
+        pedido.setCantidad(dto.getCantidad());
+        pedido.setVuelta(vuelta);
         pedido.setPrioridad(dto.getPrioridad() != null ? dto.getPrioridad() : Pedido.Prioridad.NORMAL);
         pedido.setEstado(Pedido.EstadoPedido.PENDIENTE);
         pedido.setUsuarioCreador(usuarioCreador);
@@ -90,6 +106,34 @@ public class PedidoService {
         Pedido pedido = pedidoRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
         pedido.setEstado(nuevoEstado);
+        // Si cambia a REALIZADO o a PENDIENTE, limpiar la etapa de preparación
+        // Esto asegura que cuando vuelva a EN_PREPARACION, tenga que pasar por todas las etapas nuevamente
+        if (nuevoEstado == Pedido.EstadoPedido.REALIZADO || nuevoEstado == Pedido.EstadoPedido.PENDIENTE) {
+            pedido.setEtapaPreparacion(null);
+        }
+        pedido = pedidoRepository.save(pedido);
+        return convertirADTO(pedido);
+    }
+
+    @Transactional
+    public PedidoDTO avanzarEtapaPreparacion(Long id) {
+        Pedido pedido = pedidoRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
+        
+        if (pedido.getEstado() != Pedido.EstadoPedido.EN_PREPARACION) {
+            throw new IllegalArgumentException("El pedido debe estar en preparación para avanzar su etapa");
+        }
+        
+        // Avanzar la etapa: null -> CONTROL -> PENDIENTE_CARGA -> REALIZADO
+        if (pedido.getEtapaPreparacion() == null) {
+            pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.CONTROL);
+        } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.CONTROL) {
+            pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.PENDIENTE_CARGA);
+        } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.PENDIENTE_CARGA) {
+            pedido.setEstado(Pedido.EstadoPedido.REALIZADO);
+            pedido.setEtapaPreparacion(null);
+        }
+        
         pedido = pedidoRepository.save(pedido);
         return convertirADTO(pedido);
     }
@@ -130,9 +174,9 @@ public class PedidoService {
 
         pedido.setNumeroPlanilla(dto.getNumeroPlanilla());
         
-        if (dto.getTransportistaId() != null) {
-            Transportista transportista = transportistaRepository.findById(dto.getTransportistaId())
-                    .orElseThrow(() -> new IllegalArgumentException("Transportista no encontrado"));
+        // Actualizar transporte si se proporciona
+        if (dto.getTransportistaNombre() != null && !dto.getTransportistaNombre().trim().isEmpty()) {
+            Transportista transportista = transportistaService.crearObtenerTransportistaEntity(dto.getTransportistaNombre().trim());
             pedido.setTransportista(transportista);
         }
 
@@ -143,6 +187,18 @@ public class PedidoService {
         } else if (dto.getZonaNombre() != null && dto.getZonaNombre().trim().isEmpty()) {
             // Si se envía vacío, quitar la zona
             pedido.setZona(null);
+        }
+
+        // Actualizar cantidad
+        pedido.setCantidad(dto.getCantidad());
+
+        // Actualizar vuelta si se proporciona
+        if (dto.getVueltaNombre() != null && !dto.getVueltaNombre().trim().isEmpty()) {
+            Vuelta vuelta = vueltaService.crearObtenerVueltaEntity(dto.getVueltaNombre().trim());
+            pedido.setVuelta(vuelta);
+        } else if (dto.getVueltaNombre() != null && dto.getVueltaNombre().trim().isEmpty()) {
+            // Si se envía vacío, quitar la vuelta
+            pedido.setVuelta(null);
         }
         
         pedido.setPrioridad(dto.getPrioridad() != null ? dto.getPrioridad() : Pedido.Prioridad.NORMAL);
@@ -165,21 +221,19 @@ public class PedidoService {
         dto.setNumeroPlanilla(pedido.getNumeroPlanilla());
         dto.setPrioridad(pedido.getPrioridad());
         dto.setEstado(pedido.getEstado());
+        dto.setEtapaPreparacion(pedido.getEtapaPreparacion());
         dto.setUsuarioCreadorNombre(pedido.getUsuarioCreador().getNombreCompleto());
         dto.setFechaCreacion(pedido.getFechaCreacion());
         dto.setFechaActualizacion(pedido.getFechaActualizacion());
 
         if (pedido.getTransportista() != null) {
             dto.setTransportistaId(pedido.getTransportista().getId());
-            dto.setTransportistaCodigoInterno(pedido.getTransportista().getCodigoInterno());
-            dto.setTransportistaChofer(pedido.getTransportista().getChofer());
-            dto.setTransportistaVehiculo(pedido.getTransportista().getVehiculo());
+            dto.setTransportistaNombre(pedido.getTransportista().getNombre());
             // Para compatibilidad con frontend, mantener el campo transportista como string
-            dto.setTransportista(pedido.getTransportista().getChofer() + " - " + 
-                                pedido.getTransportista().getVehiculo());
+            dto.setTransportista(pedido.getTransportista().getNombre());
         } else {
             // Si no hay transportista (pedidos antiguos), establecer valores por defecto
-            dto.setTransportista("Sin transportista asignado");
+            dto.setTransportista("Sin transporte asignado");
         }
 
         if (pedido.getGrupoAsignado() != null) {
@@ -190,6 +244,13 @@ public class PedidoService {
         if (pedido.getZona() != null) {
             dto.setZonaId(pedido.getZona().getId());
             dto.setZonaNombre(pedido.getZona().getNombre());
+        }
+
+        dto.setCantidad(pedido.getCantidad());
+
+        if (pedido.getVuelta() != null) {
+            dto.setVueltaId(pedido.getVuelta().getId());
+            dto.setVueltaNombre(pedido.getVuelta().getNombre());
         }
 
         return dto;

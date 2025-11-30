@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { pedidoService } from '../services/pedidoService';
 import { grupoService } from '../services/grupoService';
@@ -13,7 +13,9 @@ const DepositoPanel = () => {
   const [pedidos, setPedidos] = useState([]);
   const [grupos, setGrupos] = useState([]);
   const [transportistas, setTransportistas] = useState([]);
-  const [filtroEstado, setFiltroEstado] = useState('PENDIENTE'); // 'PENDIENTE', 'EN_PROCESO', 'REALIZADO', 'TRANSPORTISTAS', o 'EQUIPOS'
+  const [filtroEstado, setFiltroEstado] = useState('PENDIENTE'); // 'PENDIENTE', 'EN_PREPARACION', 'REALIZADO', 'TRANSPORTISTAS', o 'EQUIPOS'
+  const [filtroEtapaPreparacion, setFiltroEtapaPreparacion] = useState('TODOS'); // 'TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'
+  const [textoBusqueda, setTextoBusqueda] = useState(''); // Texto de búsqueda avanzada
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // Estado para controlar qué días están expandidos en la sección de realizados
@@ -26,7 +28,7 @@ const DepositoPanel = () => {
         const data = JSON.parse(saved);
         return {
           PENDIENTE: new Set(data.PENDIENTE || []),
-          EN_PROCESO: new Set(data.EN_PROCESO || []),
+          EN_PREPARACION: new Set(data.EN_PREPARACION || []),
         };
       }
     } catch (e) {
@@ -34,13 +36,13 @@ const DepositoPanel = () => {
     }
     return {
       PENDIENTE: new Set(),
-      EN_PROCESO: new Set(),
+      EN_PREPARACION: new Set(),
     };
   });
   // Cache de todos los pedidos para calcular notificaciones
   const [todosLosPedidos, setTodosLosPedidos] = useState({
     PENDIENTE: [],
-    EN_PROCESO: [],
+    EN_PREPARACION: [],
   });
   // Estado para crear equipos
   const [showGrupoModal, setShowGrupoModal] = useState(false);
@@ -64,14 +66,24 @@ const DepositoPanel = () => {
   const [pedidoSeleccionadoIndex, setPedidoSeleccionadoIndex] = useState(-1);
   // Estado para saber si estamos en modo navegación de registros
   const [enModoNavegacionRegistros, setEnModoNavegacionRegistros] = useState(false);
-  // Refs para los selects de "Asignar Equipo" y botones "Procesar"
+  // Estado para saber si estamos en modo navegación de sub-pestañas
+  const [enModoNavegacionSubPestanas, setEnModoNavegacionSubPestanas] = useState(false);
+  // Estado para rastrear el índice de la sub-pestaña seleccionada
+  const [subPestanaSeleccionadaIndex, setSubPestanaSeleccionadaIndex] = useState(-1);
+  // Refs para los selects de "Asignar Equipo" y botones "Preparar"
   const equipoSelectRefs = useRef({});
-  const procesarButtonRefs = useRef({});
-  // Refs para los botones de "En Proceso" (Volver a Pendiente y Finalizar)
+  const prepararButtonRefs = useRef({});
+  // Refs para los botones de "En Preparación" (Volver a Pendiente y Finalizar)
   const volverPendienteButtonRefs = useRef({});
   const finalizarButtonRefs = useRef({});
-  // Estado para rastrear qué botón está seleccionado en un pedido de "En Proceso"
-  const [botonSeleccionadoEnProceso, setBotonSeleccionadoEnProceso] = useState({});
+  // Estado para rastrear qué botón está seleccionado en un pedido de "En Preparación"
+  const [botonSeleccionadoEnPreparacion, setBotonSeleccionadoEnPreparacion] = useState({});
+  // Estado para rastrear si estamos navegando botones dentro de un registro
+  const [enModoNavegacionBotonesRegistro, setEnModoNavegacionBotonesRegistro] = useState(false);
+  // Estado para rastrear qué botón está seleccionado dentro de un registro (para PENDIENTE)
+  const [botonSeleccionadoEnRegistro, setBotonSeleccionadoEnRegistro] = useState({});
+  // Refs para los botones de sub-pestañas (filtros de etapa)
+  const subPestanaButtonRefs = useRef([]);
 
   // Cargar datos y conectar WebSocket, similar a AdminPanel
   useEffect(() => {
@@ -97,7 +109,7 @@ const DepositoPanel = () => {
         } else if (filtroEstado === 'EQUIPOS') {
           await cargarGrupos();
         } else {
-          // Para PENDIENTE, EN_PROCESO, REALIZADO
+          // Para PENDIENTE, EN_PREPARACION, REALIZADO
           await cargarPedidos();
         }
 
@@ -122,7 +134,7 @@ const DepositoPanel = () => {
         // Actualizar cache también
         setTodosLosPedidos(prev => ({
           PENDIENTE: prev.PENDIENTE.filter(p => p.id !== message.id),
-          EN_PROCESO: prev.EN_PROCESO.filter(p => p.id !== message.id),
+          EN_PREPARACION: prev.EN_PREPARACION.filter(p => p.id !== message.id),
         }));
       } else {
         // Recargar datos según la pestaña activa
@@ -135,7 +147,7 @@ const DepositoPanel = () => {
             console.error('Error al recargar equipos desde WebSocket:', err);
           });
         } else {
-          // Para PENDIENTE, EN_PROCESO, REALIZADO
+          // Para PENDIENTE, EN_PREPARACION, REALIZADO
           cargarPedidos().catch(err => {
             console.error('Error al recargar pedidos desde WebSocket:', err);
           });
@@ -143,11 +155,11 @@ const DepositoPanel = () => {
         // Recargar cache para notificaciones
         Promise.all([
           pedidoService.obtenerPorEstado('PENDIENTE'),
-          pedidoService.obtenerPorEstado('EN_PROCESO'),
-        ]).then(([pendientes, enProceso]) => {
+          pedidoService.obtenerPorEstado('EN_PREPARACION'),
+        ]).then(([pendientes, enPreparacion]) => {
           setTodosLosPedidos({
             PENDIENTE: pendientes.data || [],
-            EN_PROCESO: enProceso.data || [],
+            EN_PREPARACION: enPreparacion.data || [],
           });
         }).catch(err => {
           console.error('Error al actualizar cache desde WebSocket:', err);
@@ -184,7 +196,16 @@ const DepositoPanel = () => {
   useEffect(() => {
     setPedidoSeleccionadoIndex(-1);
     setEnModoNavegacionRegistros(false);
-    setBotonSeleccionadoEnProceso({});
+    setEnModoNavegacionSubPestanas(false);
+    setSubPestanaSeleccionadaIndex(-1);
+    setEnModoNavegacionBotonesRegistro(false);
+    setBotonSeleccionadoEnPreparacion({});
+    setBotonSeleccionadoEnRegistro({});
+    // Resetear filtro de etapa y búsqueda cuando cambias de pestaña
+    if (filtroEstado !== 'EN_PREPARACION') {
+      setFiltroEtapaPreparacion('TODOS');
+    }
+    setTextoBusqueda('');
   }, [filtroEstado]);
 
   // Navegación con flechas entre pestañas y entre pedidos en Pendientes
@@ -204,7 +225,7 @@ const DepositoPanel = () => {
       );
 
       const pedidosPendientes = pedidos.filter(p => p.estado === 'PENDIENTE');
-      const pedidosEnProceso = pedidos.filter(p => p.estado === 'EN_PROCESO');
+      const pedidosEnPreparacion = pedidos.filter(p => p.estado === 'EN_PREPARACION');
 
       // Si estamos en Pendientes
       if (filtroEstado === 'PENDIENTE') {
@@ -213,10 +234,10 @@ const DepositoPanel = () => {
           const selectPedidoId = focusedElement.getAttribute('data-pedido-id');
           if (event.key === 'Enter' && selectPedidoId) {
             event.preventDefault();
-            // Hacer click en el botón "Procesar" de ese pedido
-            const procesarButton = procesarButtonRefs.current[selectPedidoId];
-            if (procesarButton) {
-              procesarButton.click();
+            // Hacer click en el botón "Preparar" de ese pedido
+            const prepararButton = prepararButtonRefs.current[selectPedidoId];
+            if (prepararButton) {
+              prepararButton.click();
             }
           }
           return;
@@ -245,10 +266,12 @@ const DepositoPanel = () => {
           // Si estamos en modo navegación de registros
           if (enModoNavegacionRegistros && pedidoSeleccionadoIndex >= 0) {
             // Salir del modo navegación si estamos en el primer registro y presionamos flecha arriba
-            if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0) {
+            if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0 && !enModoNavegacionBotonesRegistro) {
               event.preventDefault();
               setEnModoNavegacionRegistros(false);
               setPedidoSeleccionadoIndex(-1);
+              setEnModoNavegacionBotonesRegistro(false);
+              setBotonSeleccionadoEnRegistro({});
               // Enfocar el botón de la pestaña para que las flechas izquierda/derecha funcionen
               const tabButton = document.querySelector('.filtros-buttons button.active');
               if (tabButton) {
@@ -257,13 +280,29 @@ const DepositoPanel = () => {
               return;
             }
 
-            // Navegación entre registros con todas las flechas
+            // Si estamos navegando botones y presionamos flecha arriba, salir del modo navegación de botones
+            if (event.key === 'ArrowUp' && enModoNavegacionBotonesRegistro) {
+              event.preventDefault();
+              setEnModoNavegacionBotonesRegistro(false);
+              setBotonSeleccionadoEnRegistro({});
+              // Enfocar el card del pedido
+              const pedidoId = pedidosPendientes[pedidoSeleccionadoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            // Navegación entre registros con todas las flechas (solo si NO estamos navegando botones)
+            if (!enModoNavegacionBotonesRegistro) {
             if (event.key === 'ArrowUp' && pedidosPendientes.length > 0) {
               event.preventDefault();
               const nuevoIndex = pedidoSeleccionadoIndex > 0 
                 ? pedidoSeleccionadoIndex - 1 
                 : pedidosPendientes.length - 1;
               setPedidoSeleccionadoIndex(nuevoIndex);
+                setBotonSeleccionadoEnRegistro({});
               
               const pedidoId = pedidosPendientes[nuevoIndex].id;
               const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
@@ -279,6 +318,7 @@ const DepositoPanel = () => {
                 ? pedidoSeleccionadoIndex + 1 
                 : 0;
               setPedidoSeleccionadoIndex(nuevoIndex);
+                setBotonSeleccionadoEnRegistro({});
               
               const pedidoId = pedidosPendientes[nuevoIndex].id;
               const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
@@ -286,15 +326,18 @@ const DepositoPanel = () => {
                 pedidoCard.focus();
               }
               return;
+              }
             }
 
-            // Navegación izquierda/derecha entre registros (si hay más de uno)
-            if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosPendientes.length > 1) {
+            // Navegación izquierda/derecha entre registros (si hay más de uno y NO estamos navegando botones)
+            if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosPendientes.length > 1 && !enModoNavegacionBotonesRegistro) {
               event.preventDefault();
               const nuevoIndex = event.key === 'ArrowLeft'
                 ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosPendientes.length - 1)
                 : (pedidoSeleccionadoIndex < pedidosPendientes.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
               setPedidoSeleccionadoIndex(nuevoIndex);
+              setEnModoNavegacionBotonesRegistro(false);
+              setBotonSeleccionadoEnRegistro({});
               
               const pedidoId = pedidosPendientes[nuevoIndex].id;
               const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
@@ -304,13 +347,62 @@ const DepositoPanel = () => {
               return;
             }
 
-            // Enter para enfocar el select de "Asignar Equipo"
+            // Si estamos navegando botones, flechas izquierda/derecha para navegar entre botones
+            if (enModoNavegacionBotonesRegistro && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+              event.preventDefault();
+              const pedidoId = pedidosPendientes[pedidoSeleccionadoIndex].id;
+              const botonActual = botonSeleccionadoEnRegistro[pedidoId];
+              
+              if (botonActual === 'select') {
+                // Navegar al botón Preparar
+                const prepararButton = prepararButtonRefs.current[pedidoId];
+                if (prepararButton) {
+                  setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'preparar' });
+                  prepararButton.focus();
+                }
+              } else if (botonActual === 'preparar') {
+                // Volver al select
+                const equipoSelect = equipoSelectRefs.current[pedidoId];
+                if (equipoSelect) {
+                  setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'select' });
+                  equipoSelect.focus();
+                }
+              }
+              return;
+            }
+
+            // Enter para navegar entre botones del registro
             if (event.key === 'Enter' && pedidosPendientes.length > 0) {
               event.preventDefault();
               const pedidoId = pedidosPendientes[pedidoSeleccionadoIndex].id;
+              
+              // Si ya estamos navegando botones, activar el botón seleccionado o navegar al siguiente
+              if (enModoNavegacionBotonesRegistro && botonSeleccionadoEnRegistro[pedidoId]) {
+                const botonActual = botonSeleccionadoEnRegistro[pedidoId];
+                
+                // Si estamos en el select, navegar al botón Preparar
+                if (botonActual === 'select') {
+                  const prepararButton = prepararButtonRefs.current[pedidoId];
+                  if (prepararButton) {
+                    setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'preparar' });
+                    prepararButton.focus();
+                  }
+                } 
+                // Si estamos en el botón Preparar, activarlo
+                else if (botonActual === 'preparar') {
+                  const prepararButton = prepararButtonRefs.current[pedidoId];
+                  if (prepararButton) {
+                    prepararButton.click();
+                  }
+                }
+              } else {
+                // Primera vez que presionamos Enter, enfocar el select
+                setEnModoNavegacionBotonesRegistro(true);
               const equipoSelect = equipoSelectRefs.current[pedidoId];
               if (equipoSelect) {
+                  setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'select' });
                 equipoSelect.focus();
+                }
               }
               return;
             }
@@ -318,8 +410,8 @@ const DepositoPanel = () => {
         }
       }
 
-      // Si estamos en En Proceso
-      if (filtroEstado === 'EN_PROCESO') {
+      // Si estamos en En Preparación
+      if (filtroEstado === 'EN_PREPARACION') {
         // PRIMERO: Si estamos en un botón, manejar navegación entre botones y Enter
         // Verificar si el elemento enfocado es un botón de estos pedidos
         const buttonPedidoId = focusedElement?.getAttribute('data-pedido-id');
@@ -346,14 +438,14 @@ const DepositoPanel = () => {
               // Cambiar al botón Finalizar
               const finalizarButton = finalizarButtonRefs.current[buttonPedidoId];
               if (finalizarButton) {
-                setBotonSeleccionadoEnProceso(prev => ({ ...prev, [buttonPedidoId]: 'finalizar' }));
+                setBotonSeleccionadoEnPreparacion(prev => ({ ...prev, [buttonPedidoId]: 'finalizar' }));
                 finalizarButton.focus();
               }
             } else {
               // Cambiar al botón Volver a Pendiente
               const volverButton = volverPendienteButtonRefs.current[buttonPedidoId];
               if (volverButton) {
-                setBotonSeleccionadoEnProceso(prev => ({ ...prev, [buttonPedidoId]: 'volver' }));
+                setBotonSeleccionadoEnPreparacion(prev => ({ ...prev, [buttonPedidoId]: 'volver' }));
                 volverButton.focus();
               }
             }
@@ -366,12 +458,12 @@ const DepositoPanel = () => {
             event.stopPropagation();
             const pedidoCard = document.querySelector(`[data-pedido-id="${buttonPedidoId}"]`);
             if (pedidoCard) {
-              const pedidosFiltrados = pedidosEnProceso;
+              const pedidosFiltrados = pedidosEnPreparacion;
               const pedidoIdNum = parseInt(buttonPedidoId);
               const indexEnFiltrados = pedidosFiltrados.findIndex(p => p.id === pedidoIdNum);
               if (indexEnFiltrados >= 0) {
                 setPedidoSeleccionadoIndex(indexEnFiltrados);
-                setBotonSeleccionadoEnProceso(prev => {
+                setBotonSeleccionadoEnPreparacion(prev => {
                   const nuevo = { ...prev };
                   delete nuevo[buttonPedidoId];
                   return nuevo;
@@ -388,50 +480,162 @@ const DepositoPanel = () => {
 
         // Si no estamos en un input/select/button, manejar navegación entre pedidos
         if (!isInputFocused) {
-          // Entrar en modo navegación de registros con flecha abajo
-          if (event.key === 'ArrowDown' && pedidosEnProceso.length > 0) {
-            event.preventDefault();
-            const nuevoIndex = enModoNavegacionRegistros 
-              ? (pedidoSeleccionadoIndex < pedidosEnProceso.length - 1 ? pedidoSeleccionadoIndex + 1 : 0)
-              : 0;
-            setPedidoSeleccionadoIndex(nuevoIndex);
-            setEnModoNavegacionRegistros(true);
+          // Si estamos en modo navegación de sub-pestañas
+          if (enModoNavegacionSubPestanas) {
+            const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
+            const currentSubIndex = subPestanas.indexOf(filtroEtapaPreparacion);
             
-            // Enfocar el card del pedido
-            const pedidoId = pedidosEnProceso[nuevoIndex].id;
-            const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
-            if (pedidoCard) {
-              pedidoCard.focus();
-            }
-            return;
-          }
-
-          // Si estamos en modo navegación de registros
-          if (enModoNavegacionRegistros && pedidoSeleccionadoIndex >= 0) {
-            // Salir del modo navegación si estamos en el primer registro y presionamos flecha arriba
-            if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0) {
+            // Navegación izquierda/derecha entre sub-pestañas
+            if (event.key === 'ArrowLeft' && currentSubIndex > 0) {
               event.preventDefault();
-              setEnModoNavegacionRegistros(false);
-              setPedidoSeleccionadoIndex(-1);
-              setBotonSeleccionadoEnProceso({});
-              // Enfocar el botón de la pestaña para que las flechas izquierda/derecha funcionen
+              const nuevaSubPestana = subPestanas[currentSubIndex - 1];
+              setFiltroEtapaPreparacion(nuevaSubPestana);
+              setSubPestanaSeleccionadaIndex(currentSubIndex - 1);
+              // Enfocar el botón de la sub-pestaña
+              const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex - 1];
+              if (subPestanaButton) {
+                subPestanaButton.focus();
+              }
+              return;
+            }
+            
+            if (event.key === 'ArrowRight' && currentSubIndex < subPestanas.length - 1) {
+              event.preventDefault();
+              const nuevaSubPestana = subPestanas[currentSubIndex + 1];
+              setFiltroEtapaPreparacion(nuevaSubPestana);
+              setSubPestanaSeleccionadaIndex(currentSubIndex + 1);
+              // Enfocar el botón de la sub-pestaña
+              const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex + 1];
+              if (subPestanaButton) {
+                subPestanaButton.focus();
+              }
+              return;
+            }
+            
+            // Con flecha abajo desde sub-pestañas, entrar a los registros
+            if (event.key === 'ArrowDown' && pedidosEnPreparacion.length > 0) {
+              event.preventDefault();
+              setEnModoNavegacionSubPestanas(false);
+              const nuevoIndex = 0;
+              setPedidoSeleccionadoIndex(nuevoIndex);
+              setEnModoNavegacionRegistros(true);
+              
+              // Enfocar el card del pedido
+              const pedidoId = pedidosEnPreparacion[nuevoIndex]?.id;
+              if (pedidoId) {
+                const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+                if (pedidoCard) {
+                  pedidoCard.focus();
+                }
+              }
+              return;
+            }
+            
+            // Con flecha arriba desde sub-pestañas, volver a la pestaña principal
+            if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              setEnModoNavegacionSubPestanas(false);
+              setSubPestanaSeleccionadaIndex(-1);
+              // Enfocar el botón de la pestaña principal
               const tabButton = document.querySelector('.filtros-buttons button.active');
               if (tabButton) {
                 tabButton.focus();
               }
               return;
             }
+          }
+          
+          // Si no estamos en modo navegación de sub-pestañas ni de registros, y presionamos flecha abajo
+          if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros) {
+            // Si estamos en EN_PREPARACION, entrar a las sub-pestañas primero
+            if (event.key === 'ArrowDown' && filtroEstado === 'EN_PREPARACION') {
+              event.preventDefault();
+              setEnModoNavegacionSubPestanas(true);
+              const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
+              const currentSubIndex = subPestanas.indexOf(filtroEtapaPreparacion);
+              setSubPestanaSeleccionadaIndex(currentSubIndex >= 0 ? currentSubIndex : 0);
+              // Enfocar el botón de sub-pestaña actual
+              const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex >= 0 ? currentSubIndex : 0];
+              if (subPestanaButton) {
+                subPestanaButton.focus();
+              }
+              return;
+            }
+            
+            // Para otras pestañas o si no hay sub-pestañas, entrar directamente a los registros
+            if (event.key === 'ArrowDown' && pedidosEnPreparacion.length > 0) {
+            event.preventDefault();
+            const nuevoIndex = enModoNavegacionRegistros 
+                ? (pedidoSeleccionadoIndex < pedidosEnPreparacion.length - 1 ? pedidoSeleccionadoIndex + 1 : 0)
+              : 0;
+            setPedidoSeleccionadoIndex(nuevoIndex);
+            setEnModoNavegacionRegistros(true);
+            
+            // Enfocar el card del pedido
+              const pedidoId = pedidosEnPreparacion[nuevoIndex].id;
+            const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+            return;
+            }
+          }
 
-            // Navegación entre registros con todas las flechas
-            if (event.key === 'ArrowUp' && pedidosEnProceso.length > 0) {
+          // Si estamos en modo navegación de registros
+          if (enModoNavegacionRegistros && pedidoSeleccionadoIndex >= 0) {
+            // Salir del modo navegación si estamos en el primer registro y presionamos flecha arriba
+            if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0 && !enModoNavegacionBotonesRegistro) {
+              event.preventDefault();
+              setEnModoNavegacionRegistros(false);
+              setPedidoSeleccionadoIndex(-1);
+              setEnModoNavegacionBotonesRegistro(false);
+              setBotonSeleccionadoEnPreparacion({});
+              
+              // Si estamos en EN_PREPARACION, volver a las sub-pestañas
+              if (filtroEstado === 'EN_PREPARACION') {
+                setEnModoNavegacionSubPestanas(true);
+                const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
+                const currentSubIndex = subPestanas.indexOf(filtroEtapaPreparacion);
+                setSubPestanaSeleccionadaIndex(currentSubIndex >= 0 ? currentSubIndex : 0);
+                const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex >= 0 ? currentSubIndex : 0];
+                if (subPestanaButton) {
+                  subPestanaButton.focus();
+                }
+              } else {
+              // Enfocar el botón de la pestaña para que las flechas izquierda/derecha funcionen
+              const tabButton = document.querySelector('.filtros-buttons button.active');
+              if (tabButton) {
+                tabButton.focus();
+                }
+              }
+              return;
+            }
+
+            // Si estamos navegando botones y presionamos flecha arriba, salir del modo navegación de botones
+            if (event.key === 'ArrowUp' && enModoNavegacionBotonesRegistro) {
+              event.preventDefault();
+              setEnModoNavegacionBotonesRegistro(false);
+              setBotonSeleccionadoEnPreparacion({});
+              // Enfocar el card del pedido
+              const pedidoId = pedidosEnPreparacion[pedidoSeleccionadoIndex].id;
+              const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
+              if (pedidoCard) {
+                pedidoCard.focus();
+              }
+              return;
+            }
+
+            // Navegación entre registros con todas las flechas (solo si NO estamos navegando botones)
+            if (!enModoNavegacionBotonesRegistro) {
+              if (event.key === 'ArrowUp' && pedidosEnPreparacion.length > 0) {
               event.preventDefault();
               const nuevoIndex = pedidoSeleccionadoIndex > 0 
                 ? pedidoSeleccionadoIndex - 1 
-                : pedidosEnProceso.length - 1;
+                  : pedidosEnPreparacion.length - 1;
               setPedidoSeleccionadoIndex(nuevoIndex);
-              setBotonSeleccionadoEnProceso({});
+                setBotonSeleccionadoEnPreparacion({});
               
-              const pedidoId = pedidosEnProceso[nuevoIndex].id;
+                const pedidoId = pedidosEnPreparacion[nuevoIndex].id;
               const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
               if (pedidoCard) {
                 pedidoCard.focus();
@@ -439,36 +643,38 @@ const DepositoPanel = () => {
               return;
             }
 
-            if (event.key === 'ArrowDown' && pedidosEnProceso.length > 0) {
+              if (event.key === 'ArrowDown' && pedidosEnPreparacion.length > 0) {
               event.preventDefault();
-              const nuevoIndex = pedidoSeleccionadoIndex < pedidosEnProceso.length - 1 
+                const nuevoIndex = pedidoSeleccionadoIndex < pedidosEnPreparacion.length - 1 
                 ? pedidoSeleccionadoIndex + 1 
                 : 0;
               setPedidoSeleccionadoIndex(nuevoIndex);
-              setBotonSeleccionadoEnProceso({});
+                setBotonSeleccionadoEnPreparacion({});
               
-              const pedidoId = pedidosEnProceso[nuevoIndex].id;
+                const pedidoId = pedidosEnPreparacion[nuevoIndex].id;
               const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
               if (pedidoCard) {
                 pedidoCard.focus();
               }
               return;
+              }
             }
 
-            // Navegación izquierda/derecha entre registros (si hay más de uno) - solo si NO estamos en un botón
+            // Navegación izquierda/derecha entre registros (si hay más de uno) - solo si NO estamos en un botón ni navegando botones
             const buttonPedidoIdCheck = focusedElement?.getAttribute('data-pedido-id');
             const esBotonDePedidoCheck = buttonPedidoIdCheck && (focusedElement.tagName === 'BUTTON') && 
               (volverPendienteButtonRefs.current[buttonPedidoIdCheck] || finalizarButtonRefs.current[buttonPedidoIdCheck]);
             
-            if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosEnProceso.length > 1 && !esBotonDePedidoCheck) {
+            if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosEnPreparacion.length > 1 && !esBotonDePedidoCheck && !enModoNavegacionBotonesRegistro) {
               event.preventDefault();
               const nuevoIndex = event.key === 'ArrowLeft'
-                ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosEnProceso.length - 1)
-                : (pedidoSeleccionadoIndex < pedidosEnProceso.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
+                ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosEnPreparacion.length - 1)
+                : (pedidoSeleccionadoIndex < pedidosEnPreparacion.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
               setPedidoSeleccionadoIndex(nuevoIndex);
-              setBotonSeleccionadoEnProceso({});
+              setBotonSeleccionadoEnPreparacion({});
+              setEnModoNavegacionBotonesRegistro(false);
               
-              const pedidoId = pedidosEnProceso[nuevoIndex].id;
+              const pedidoId = pedidosEnPreparacion[nuevoIndex].id;
               const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
               if (pedidoCard) {
                 pedidoCard.focus();
@@ -476,18 +682,87 @@ const DepositoPanel = () => {
               return;
             }
 
-            // Enter para enfocar el primer botón del pedido
-            if (event.key === 'Enter' && pedidosEnProceso.length > 0) {
+            // Si estamos navegando botones, flechas izquierda/derecha para navegar entre botones
+            if (enModoNavegacionBotonesRegistro && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
               event.preventDefault();
-              const pedidoId = pedidosEnProceso[pedidoSeleccionadoIndex].id;
+              const pedidoId = pedidosEnPreparacion[pedidoSeleccionadoIndex].id;
+              const pedido = pedidosEnPreparacion[pedidoSeleccionadoIndex];
+              const botonActual = botonSeleccionadoEnPreparacion[pedidoId];
+              
+              // Si el pedido no está en PENDIENTE_CARGA, hay dos botones
+              if (pedido.etapaPreparacion !== 'PENDIENTE_CARGA') {
+                if (botonActual === 'volver') {
+                  // Navegar al botón finalizar
+                  const finalizarButton = finalizarButtonRefs.current[pedidoId];
+                  if (finalizarButton) {
+                    setBotonSeleccionadoEnPreparacion(prev => ({ ...prev, [pedidoId]: 'finalizar' }));
+                    finalizarButton.focus();
+                  }
+                } else if (botonActual === 'finalizar') {
+                  // Volver al botón volver
               const volverButton = volverPendienteButtonRefs.current[pedidoId];
               if (volverButton) {
-                // Actualizar el estado antes de enfocar
-                setBotonSeleccionadoEnProceso(prev => ({ ...prev, [pedidoId]: 'volver' }));
-                // Pequeño delay para asegurar que el estado se actualice
-                setTimeout(() => {
+                    setBotonSeleccionadoEnPreparacion(prev => ({ ...prev, [pedidoId]: 'volver' }));
                   volverButton.focus();
-                }, 0);
+                  }
+                }
+              }
+              return;
+            }
+
+            // Enter para navegar entre botones del registro
+            if (event.key === 'Enter' && pedidosEnPreparacion.length > 0) {
+              event.preventDefault();
+              const pedidoId = pedidosEnPreparacion[pedidoSeleccionadoIndex].id;
+              const pedido = pedidosEnPreparacion[pedidoSeleccionadoIndex];
+              
+              // Si ya estamos navegando botones, activar el botón seleccionado o navegar al siguiente
+              if (enModoNavegacionBotonesRegistro && botonSeleccionadoEnPreparacion[pedidoId]) {
+                const botonActual = botonSeleccionadoEnPreparacion[pedidoId];
+                
+                // Si estamos en "volver", activarlo o navegar a "finalizar"
+                if (botonActual === 'volver') {
+                  // Si el pedido no está en PENDIENTE_CARGA, navegar al botón finalizar
+                  if (pedido.etapaPreparacion !== 'PENDIENTE_CARGA') {
+                    const finalizarButton = finalizarButtonRefs.current[pedidoId];
+                    if (finalizarButton) {
+                      setBotonSeleccionadoEnPreparacion(prev => ({ ...prev, [pedidoId]: 'finalizar' }));
+                      finalizarButton.focus();
+                    }
+                  } else {
+                    // Si está en PENDIENTE_CARGA, solo hay un botón, activarlo
+                    const finalizarButton = finalizarButtonRefs.current[pedidoId];
+                    if (finalizarButton) {
+                      finalizarButton.click();
+                    }
+                  }
+                } 
+                // Si estamos en "finalizar", activarlo
+                else if (botonActual === 'finalizar') {
+                  const finalizarButton = finalizarButtonRefs.current[pedidoId];
+                  if (finalizarButton) {
+                    finalizarButton.click();
+                  }
+                }
+              } else {
+                // Primera vez que presionamos Enter, enfocar el primer botón disponible
+                setEnModoNavegacionBotonesRegistro(true);
+                
+                // Si el pedido no está en PENDIENTE_CARGA, empezar con "volver"
+                if (pedido.etapaPreparacion !== 'PENDIENTE_CARGA') {
+              const volverButton = volverPendienteButtonRefs.current[pedidoId];
+              if (volverButton) {
+                    setBotonSeleccionadoEnPreparacion(prev => ({ ...prev, [pedidoId]: 'volver' }));
+                  volverButton.focus();
+                  }
+                } else {
+                  // Si está en PENDIENTE_CARGA, solo hay un botón (finalizar)
+                  const finalizarButton = finalizarButtonRefs.current[pedidoId];
+                  if (finalizarButton) {
+                    setBotonSeleccionadoEnPreparacion(prev => ({ ...prev, [pedidoId]: 'finalizar' }));
+                    finalizarButton.focus();
+                  }
+                }
               }
               return;
             }
@@ -495,9 +770,9 @@ const DepositoPanel = () => {
         }
       }
 
-      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros)
-      if (!enModoNavegacionRegistros && !isInputFocused) {
-        const tabs = ['PENDIENTE', 'EN_PROCESO', 'REALIZADO', 'EQUIPOS', 'TRANSPORTISTAS'];
+      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros ni de sub-pestañas)
+      if (!enModoNavegacionRegistros && !enModoNavegacionSubPestanas && !isInputFocused) {
+        const tabs = ['PENDIENTE', 'EN_PREPARACION', 'REALIZADO', 'EQUIPOS', 'TRANSPORTISTAS'];
         const currentIndex = tabs.indexOf(filtroEstado);
 
         if (event.key === 'ArrowLeft' && currentIndex > 0) {
@@ -505,11 +780,13 @@ const DepositoPanel = () => {
           setFiltroEstado(tabs[currentIndex - 1]);
           setPedidoSeleccionadoIndex(-1);
           setEnModoNavegacionRegistros(false);
+          setEnModoNavegacionSubPestanas(false);
         } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
           event.preventDefault();
           setFiltroEstado(tabs[currentIndex + 1]);
           setPedidoSeleccionadoIndex(-1);
           setEnModoNavegacionRegistros(false);
+          setEnModoNavegacionSubPestanas(false);
         }
       }
     };
@@ -518,7 +795,7 @@ const DepositoPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [filtroEstado, showGrupoModal, showResumenModal, pedidos, pedidoSeleccionadoIndex, enModoNavegacionRegistros]);
+  }, [filtroEstado, filtroEtapaPreparacion, showGrupoModal, showResumenModal, pedidos, pedidoSeleccionadoIndex, enModoNavegacionRegistros, enModoNavegacionSubPestanas, subPestanaSeleccionadaIndex, enModoNavegacionBotonesRegistro, botonSeleccionadoEnPreparacion, botonSeleccionadoEnRegistro]);
 
   // Agregar listener para abrir modal de crear equipo con Enter cuando esté en la sección de equipos
   useEffect(() => {
@@ -572,13 +849,13 @@ const DepositoPanel = () => {
   // Función para cargar todos los pedidos para calcular notificaciones
   const cargarTodosLosPedidosParaNotificaciones = async () => {
     try {
-      const [pendientes, enProceso] = await Promise.all([
+      const [pendientes, enPreparacion] = await Promise.all([
         pedidoService.obtenerPorEstado('PENDIENTE'),
-        pedidoService.obtenerPorEstado('EN_PROCESO'),
+        pedidoService.obtenerPorEstado('EN_PREPARACION'),
       ]);
       setTodosLosPedidos({
         PENDIENTE: pendientes.data || [],
-        EN_PROCESO: enProceso.data || [],
+        EN_PREPARACION: enPreparacion.data || [],
       });
     } catch (error) {
       console.error('Error al cargar todos los pedidos:', error);
@@ -613,7 +890,7 @@ const DepositoPanel = () => {
     try {
       localStorage.setItem('pedidosVistosDeposito', JSON.stringify({
         PENDIENTE: Array.from(nuevosVistos.PENDIENTE),
-        EN_PROCESO: Array.from(nuevosVistos.EN_PROCESO),
+          EN_PREPARACION: Array.from(nuevosVistos.EN_PREPARACION || []),
       }));
     } catch (e) {
       console.error('Error al guardar pedidos vistos:', e);
@@ -626,7 +903,7 @@ const DepositoPanel = () => {
     if (prevFiltroEstado.current !== filtroEstado) {
       prevFiltroEstado.current = filtroEstado;
       
-      if ((filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') && pedidos.length > 0) {
+      if ((filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PREPARACION') && pedidos.length > 0) {
         setPedidosVistos(prev => {
           const nuevosVistos = new Set(prev[filtroEstado]);
           pedidos.forEach(pedido => {
@@ -745,6 +1022,25 @@ const DepositoPanel = () => {
     }
   };
 
+  const handleAvanzarEtapa = async (pedidoId) => {
+    try {
+      await pedidoService.avanzarEtapaPreparacion(pedidoId);
+      await cargarPedidos();
+      // Actualizar cache
+      const [pendientes, enPreparacion] = await Promise.all([
+        pedidoService.obtenerPorEstado('PENDIENTE'),
+        pedidoService.obtenerPorEstado('EN_PREPARACION'),
+      ]);
+      setTodosLosPedidos({
+        PENDIENTE: pendientes.data || [],
+        EN_PREPARACION: enPreparacion.data || [],
+      });
+    } catch (error) {
+      console.error('Error al avanzar etapa:', error);
+      alert(error.response?.data || 'Error al avanzar etapa');
+    }
+  };
+
   const handleCambiarEstado = async (pedidoId, nuevoEstado) => {
     try {
       const pedidoActual = pedidos.find(p => p.id === pedidoId);
@@ -752,8 +1048,8 @@ const DepositoPanel = () => {
       
       await pedidoService.actualizarEstado(pedidoId, nuevoEstado);
       
-      // Si el pedido cambia de PENDIENTE a EN_PROCESO, actualizar el cache inmediatamente
-      if (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PROCESO') {
+      // Si el pedido cambia de PENDIENTE a EN_PREPARACION, actualizar el cache inmediatamente
+      if (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PREPARACION') {
         // Removerlo de los vistos de PENDIENTE
         setPedidosVistos(prev => {
           const nuevosVistosPendiente = new Set(prev.PENDIENTE);
@@ -761,24 +1057,57 @@ const DepositoPanel = () => {
           const nuevoEstado = {
             ...prev,
             PENDIENTE: nuevosVistosPendiente,
-            // No agregar a EN_PROCESO para que aparezca como nuevo
+            // No agregar a EN_PREPARACION para que aparezca como nuevo
           };
           guardarPedidosVistos(nuevoEstado);
           return nuevoEstado;
         });
         
-        // Actualizar el cache manualmente: remover de PENDIENTE y agregar a EN_PROCESO
+        // Actualizar el cache manualmente: remover de PENDIENTE y agregar a EN_PREPARACION
         setTodosLosPedidos(prev => {
           const nuevoPendiente = prev.PENDIENTE.filter(p => p.id !== pedidoId);
-          const nuevoEnProceso = [...prev.EN_PROCESO];
-          // Agregar el pedido actualizado a EN_PROCESO si no está ya
-          if (!nuevoEnProceso.find(p => p.id === pedidoId)) {
-            const pedidoActualizado = { ...pedidoActual, estado: nuevoEstado };
-            nuevoEnProceso.push(pedidoActualizado);
+          const nuevoEnPreparacion = [...prev.EN_PREPARACION];
+          // Agregar el pedido actualizado a EN_PREPARACION si no está ya
+          if (!nuevoEnPreparacion.find(p => p.id !== pedidoId)) {
+            const pedidoActualizado = { ...pedidoActual, estado: nuevoEstado, etapaPreparacion: null };
+            nuevoEnPreparacion.push(pedidoActualizado);
           }
           return {
             PENDIENTE: nuevoPendiente,
-            EN_PROCESO: nuevoEnProceso,
+            EN_PREPARACION: nuevoEnPreparacion,
+          };
+        });
+      }
+      
+      // Si el pedido cambia de EN_PREPARACION a PENDIENTE, actualizar el cache para resetear etapaPreparacion
+      if (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') {
+        // Removerlo de los vistos de EN_PREPARACION
+        setPedidosVistos(prev => {
+          const nuevosVistosEnPreparacion = new Set(prev.EN_PREPARACION);
+          nuevosVistosEnPreparacion.delete(pedidoId);
+          const nuevoEstado = {
+            ...prev,
+            EN_PREPARACION: nuevosVistosEnPreparacion,
+          };
+          guardarPedidosVistos(nuevoEstado);
+          return nuevoEstado;
+        });
+        
+        // Actualizar el cache manualmente: remover de EN_PREPARACION y agregar a PENDIENTE con etapaPreparacion null
+        setTodosLosPedidos(prev => {
+          const nuevoEnPreparacion = prev.EN_PREPARACION.filter(p => p.id !== pedidoId);
+          const nuevoPendiente = [...prev.PENDIENTE];
+          // Actualizar el pedido en PENDIENTE para asegurar que etapaPreparacion sea null
+          const pedidoIndex = nuevoPendiente.findIndex(p => p.id === pedidoId);
+          if (pedidoIndex >= 0) {
+            nuevoPendiente[pedidoIndex] = { ...nuevoPendiente[pedidoIndex], estado: nuevoEstado, etapaPreparacion: null };
+          } else {
+            const pedidoActualizado = { ...pedidoActual, estado: nuevoEstado, etapaPreparacion: null };
+            nuevoPendiente.push(pedidoActualizado);
+          }
+          return {
+            PENDIENTE: nuevoPendiente,
+            EN_PREPARACION: nuevoEnPreparacion,
           };
         });
       }
@@ -787,37 +1116,38 @@ const DepositoPanel = () => {
       await cargarPedidos();
       
       // Actualizar el cache desde el backend después de un delay para asegurar consistencia
-      // Para cambios de PENDIENTE a EN_PROCESO, esperar más tiempo para que el backend procese
-      const delay = (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PROCESO') ? 1000 : 300;
+      // Para cambios de PENDIENTE a EN_PREPARACION o viceversa, esperar más tiempo para que el backend procese
+      const delay = (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PREPARACION') || 
+                    (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') ? 1000 : 300;
       setTimeout(async () => {
         try {
-          const [pendientes, enProceso] = await Promise.all([
+          const [pendientes, enPreparacion] = await Promise.all([
             pedidoService.obtenerPorEstado('PENDIENTE'),
-            pedidoService.obtenerPorEstado('EN_PROCESO'),
+            pedidoService.obtenerPorEstado('EN_PREPARACION'),
           ]);
           
-          // Para cambios de PENDIENTE a EN_PROCESO, solo actualizar si el pedido está en EN_PROCESO en el backend
-          if (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PROCESO') {
-            const pedidoEnBackend = enProceso.data?.find(p => p.id === pedidoId);
+          // Para cambios de PENDIENTE a EN_PREPARACION, solo actualizar si el pedido está en EN_PREPARACION en el backend
+          if (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PREPARACION') {
+            const pedidoEnBackend = enPreparacion.data?.find(p => p.id === pedidoId);
             if (pedidoEnBackend) {
               // El backend ya procesó el cambio, actualizar el cache
               setTodosLosPedidos({
                 PENDIENTE: pendientes.data || [],
-                EN_PROCESO: enProceso.data || [],
+                EN_PREPARACION: enPreparacion.data || [],
               });
             } else {
               // Si el pedido no está en el backend aún, intentar de nuevo después de un delay más largo
               setTimeout(async () => {
                 try {
-                  const [pendientes2, enProceso2] = await Promise.all([
+                  const [pendientes2, enPreparacion2] = await Promise.all([
                     pedidoService.obtenerPorEstado('PENDIENTE'),
-                    pedidoService.obtenerPorEstado('EN_PROCESO'),
+                    pedidoService.obtenerPorEstado('EN_PREPARACION'),
                   ]);
-                  const pedidoEnBackend2 = enProceso2.data?.find(p => p.id === pedidoId);
+                  const pedidoEnBackend2 = enPreparacion2.data?.find(p => p.id === pedidoId);
                   if (pedidoEnBackend2) {
                     setTodosLosPedidos({
                       PENDIENTE: pendientes2.data || [],
-                      EN_PROCESO: enProceso2.data || [],
+                      EN_PREPARACION: enPreparacion2.data || [],
                     });
                   }
                 } catch (err) {
@@ -829,7 +1159,7 @@ const DepositoPanel = () => {
             // Para otros cambios, actualizar normalmente
             setTodosLosPedidos({
               PENDIENTE: pendientes.data || [],
-              EN_PROCESO: enProceso.data || [],
+              EN_PREPARACION: enPreparacion.data || [],
             });
           }
         } catch (err) {
@@ -915,13 +1245,40 @@ const DepositoPanel = () => {
     return colors[prioridad] || '#666';
   };
 
-  const getEstadoColor = (estado) => {
-    const colors = {
-      PENDIENTE: '#FF9800',
-      EN_PROCESO: '#2196F3',
-      REALIZADO: '#4CAF50',
-    };
-    return colors[estado] || '#666';
+  const getEstadoTexto = (pedido) => {
+    if (pedido.estado === 'REALIZADO') {
+      return 'Finalizado';
+    } else if (pedido.estado === 'EN_PREPARACION') {
+      if (!pedido.etapaPreparacion) {
+        return 'En Preparación'; // Cuando recién pasa a EN_PREPARACION sin etapa
+      } else if (pedido.etapaPreparacion === 'CONTROL') {
+        return 'Controlado';
+      } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
+        return 'Pendiente de Carga';
+      }
+      return 'En Preparación';
+    } else if (pedido.estado === 'PENDIENTE') {
+      return 'Pendiente';
+    }
+    return pedido.estado.replace('_', ' ');
+  };
+
+  const getEstadoColor = (pedido) => {
+    if (pedido.estado === 'REALIZADO') {
+      return '#4CAF50';
+    } else if (pedido.estado === 'EN_PREPARACION') {
+      if (!pedido.etapaPreparacion) {
+        return '#2196F3'; // Azul para "En Preparación" (sin etapa aún)
+      } else if (pedido.etapaPreparacion === 'CONTROL') {
+        return '#2196F3'; // Azul para Controlado
+      } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
+        return '#FF9800'; // Naranja para Pendiente de Carga
+      }
+      return '#2196F3';
+    } else if (pedido.estado === 'PENDIENTE') {
+      return '#9E9E9E'; // Gris para Pendiente (diferente de Pendiente de Carga)
+    }
+    return '#666';
   };
 
   // Calcular cantidad de pedidos nuevos por estado
@@ -940,6 +1297,15 @@ const DepositoPanel = () => {
     return pedidosEstado.length;
   }, [todosLosPedidos]);
 
+  const getCantidadPorEtapa = useCallback((etapa) => {
+    const pedidosEnPreparacion = todosLosPedidos.EN_PREPARACION || [];
+    if (etapa === 'TODOS') return pedidosEnPreparacion.length;
+    if (etapa === 'SIN_CONTROL') return pedidosEnPreparacion.filter(p => !p.etapaPreparacion).length;
+    if (etapa === 'CONTROL') return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'CONTROL').length;
+    if (etapa === 'PENDIENTE_CARGA') return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA').length;
+    return 0;
+  }, [todosLosPedidos]);
+
   // Calcular pedidos realizados por día y agruparlos
   const getPedidosAgrupadosPorDia = () => {
     if (filtroEstado !== 'REALIZADO') return null;
@@ -950,6 +1316,18 @@ const DepositoPanel = () => {
 
     pedidos.forEach(pedido => {
       if (pedido.estado === 'REALIZADO' && pedido.fechaActualizacion) {
+        // Aplicar filtro de búsqueda si existe
+        if (textoBusqueda.trim()) {
+          const busqueda = textoBusqueda.toLowerCase().trim();
+          const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+          const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+          const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+          const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+          if (!matchPlanilla && !matchTransporte && !matchZona && !matchVuelta) {
+            return; // Saltar este pedido si no coincide con la búsqueda
+          }
+        }
+        
         const fechaPedido = new Date(pedido.fechaActualizacion);
         fechaPedido.setHours(0, 0, 0, 0);
         
@@ -1010,13 +1388,18 @@ const DepositoPanel = () => {
     }).length;
   };
 
-  const pedidosAgrupadosPorDia = getPedidosAgrupadosPorDia();
+  const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [pedidos, filtroEstado, textoBusqueda]);
   const pedidosPorDia = getPedidosPorDia();
   const cantidadHoy = getCantidadRealizadosHoy();
 
   // Expandir el día de hoy por defecto cuando se carga la sección de realizados
   useEffect(() => {
     if (filtroEstado === 'REALIZADO' && pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0) {
+      if (textoBusqueda.trim()) {
+        // Si hay búsqueda activa, expandir todos los días que tienen resultados
+        setDiasExpandidos(new Set(pedidosAgrupadosPorDia.map(dia => dia.fecha)));
+      } else {
+        // Si no hay búsqueda, solo expandir el día de hoy
       const hoy = pedidosAgrupadosPorDia.find(dia => dia.esHoy);
       if (hoy) {
         setDiasExpandidos(prev => {
@@ -1025,12 +1408,13 @@ const DepositoPanel = () => {
           }
           return prev;
         });
+        }
       }
     } else if (filtroEstado !== 'REALIZADO') {
       // Limpiar días expandidos cuando se cambia de pestaña
       setDiasExpandidos(new Set());
     }
-  }, [filtroEstado]);
+  }, [filtroEstado, pedidosAgrupadosPorDia, textoBusqueda]);
 
   const toggleDia = (fecha) => {
     setDiasExpandidos(prev => {
@@ -1120,7 +1504,7 @@ const DepositoPanel = () => {
               marginRight: '12px',
               verticalAlign: 'middle',
               display: 'inline-block'
-            }} 
+            }}
           />
           Panel de Depósito
         </h1>
@@ -1196,12 +1580,12 @@ const DepositoPanel = () => {
             )}
           </button>
           <button
-            className={filtroEstado === 'EN_PROCESO' ? 'active' : ''}
-            onClick={() => setFiltroEstado('EN_PROCESO')}
+            className={filtroEstado === 'EN_PREPARACION' ? 'active' : ''}
+            onClick={() => setFiltroEstado('EN_PREPARACION')}
             style={{ position: 'relative' }}
           >
-            En Proceso
-            {getCantidadTotal('EN_PROCESO') > 0 && (
+            En Preparación
+            {getCantidadTotal('EN_PREPARACION') > 0 && (
               <span
                 style={{
                   position: 'absolute',
@@ -1220,7 +1604,7 @@ const DepositoPanel = () => {
                   boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                 }}
               >
-                {getCantidadTotal('EN_PROCESO')}
+                {getCantidadTotal('EN_PREPARACION')}
               </span>
             )}
           </button>
@@ -1505,6 +1889,94 @@ const DepositoPanel = () => {
           </div>
         )}
 
+        {/* Buscador para sección REALIZADO */}
+        {filtroEstado === 'REALIZADO' && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '20px',
+            padding: '20px 40px',
+            margin: '0 20px 25px 20px',
+            background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+            border: '1px solid #e2e8f0',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }}>
+              <span style={{ fontSize: '1.8rem' }}>✅</span>
+              <h2 style={{
+                margin: 0,
+                fontSize: '1.5rem',
+                fontWeight: '700',
+                color: '#1e293b',
+                letterSpacing: '-0.02em'
+              }}>
+                Planillas Realizadas
+              </h2>
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flex: '0 0 400px',
+              position: 'relative'
+            }}>
+              <span style={{ fontSize: '1.2rem' }}>🔍</span>
+              <input
+                type="text"
+                placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                value={textoBusqueda}
+                onChange={(e) => setTextoBusqueda(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: '10px 15px',
+                  border: '2px solid #e0e0e0',
+                  borderRadius: '8px',
+                  fontSize: '0.95rem',
+                  outline: 'none',
+                  transition: 'all 0.2s',
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = '#0f766e';
+                  e.target.style.boxShadow = '0 0 0 3px rgba(15, 118, 110, 0.1)';
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = '#e0e0e0';
+                  e.target.style.boxShadow = 'none';
+                }}
+              />
+              {textoBusqueda && (
+                <button
+                  onClick={() => setTextoBusqueda('')}
+                  style={{
+                    padding: '8px 12px',
+                    border: 'none',
+                    borderRadius: '6px',
+                    backgroundColor: '#f3f4f6',
+                    color: '#666',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = '#e5e7eb';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = '#f3f4f6';
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {filtroEstado === 'REALIZADO' && pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
             {pedidosAgrupadosPorDia.map((dia) => (
@@ -1611,10 +2083,56 @@ const DepositoPanel = () => {
                 {/* Pedidos del día - solo se muestran si está expandido */}
                 {diasExpandidos.has(dia.fecha) && (
                   <div className="pedidos-grid" style={{ padding: '20px', gap: '15px' }}>
-                    {dia.pedidos.map((pedido) => (
+                    {dia.pedidos.filter(pedido => {
+                      // Aplicar filtro de búsqueda si existe
+                      if (textoBusqueda.trim()) {
+                        const busqueda = textoBusqueda.toLowerCase().trim();
+                        const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                        const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                        const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                        const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                        return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+                      }
+                      return true;
+                    }).map((pedido) => (
                       <div key={pedido.id} className="pedido-card deposito-pedido-card">
                         <div className="pedido-header">
-                          <h3>Planilla: {pedido.numeroPlanilla}</h3>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{
+                              width: '48px',
+                              height: '48px',
+                              borderRadius: '12px',
+                              background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '1.5rem',
+                              color: 'white',
+                              fontWeight: '700',
+                              boxShadow: '0 4px 12px rgba(15, 118, 110, 0.3)'
+                            }}>
+                              📦
+                            </div>
+                            <div>
+                              <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
+                                Planilla #{pedido.numeroPlanilla}
+                              </h3>
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                color: '#64748b', 
+                                marginTop: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px'
+                              }}>
+                                <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: false,
+                                })}</span>
+                              </div>
+                            </div>
+                          </div>
                           <span
                             className="prioridad-badge"
                             style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
@@ -1622,49 +2140,90 @@ const DepositoPanel = () => {
                             {pedido.prioridad}
                           </span>
                         </div>
+                        
                         <div className="pedido-info">
-                          <div style={{ marginBottom: '10px' }}>
-                            <strong style={{ display: 'block', marginBottom: '5px', color: '#333' }}>Transportista:</strong>
-                            {pedido.transportistaChofer && pedido.transportistaVehiculo ? (
-                              <div style={{ marginLeft: '0', color: '#666' }}>
-                                {pedido.transportistaCodigoInterno && (
-                                  <span style={{ color: '#999', fontSize: '0.9em' }}>
-                                    {pedido.transportistaCodigoInterno} -{' '}
-                                  </span>
-                                )}
-                                {pedido.transportistaChofer} - {pedido.transportistaVehiculo}
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '16px',
+                            marginBottom: '16px'
+                          }}>
+                            <div className="info-item">
+                              <div className="info-label">🚚 Transporte</div>
+                              <div className="info-value">
+                                {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
                               </div>
-                            ) : (
-                              <div style={{ marginLeft: '0', color: '#666' }}>
-                                {pedido.transportista || 'Sin transportista'}
+                            </div>
+                            {pedido.cantidad && (
+                              <div className="info-item">
+                                <div className="info-label">📊 Cantidad</div>
+                                <div className="info-value">{pedido.cantidad}</div>
                               </div>
                             )}
+                              </div>
+                          
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '16px',
+                            marginBottom: '16px'
+                          }}>
+                            {pedido.zonaNombre && (
+                              <div className="info-item">
+                                <div className="info-label">📍 Zona</div>
+                                <div className="info-value">{pedido.zonaNombre}</div>
+                              </div>
+                            )}
+                            {pedido.vueltaNombre && (
+                              <div className="info-item">
+                                <div className="info-label">🔄 Vuelta</div>
+                                <div className="info-value">{pedido.vueltaNombre}</div>
                           </div>
-                          {pedido.zonaNombre && (
-                            <p>
-                              <strong>Zona:</strong> {pedido.zonaNombre}
-                            </p>
-                          )}
-                          <p>
-                            <strong>Equipo Asignado:</strong>{' '}
-                            {pedido.grupoNombre || 'Sin asignar'}
-                          </p>
-                          {pedido.fechaCreacion && (
-                            <p>
-                              <strong>Hora de Carga:</strong>{' '}
-                              <span style={{ color: '#666' }}>
-                                {new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: false,
-                                })}
+                            )}
+                          </div>
+                          
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '16px',
+                            marginBottom: '16px'
+                          }}>
+                            <div className="info-item">
+                              <div className="info-label">👥 Equipo</div>
+                              <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
+                            </div>
+                            <div className="info-item">
+                              <div className="info-label">📋 Estado</div>
+                              <span
+                                className="estado-badge"
+                                style={{ backgroundColor: getEstadoColor(pedido) }}
+                              >
+                                {getEstadoTexto(pedido)}
                               </span>
-                            </p>
-                          )}
+                            </div>
+                          </div>
+                          
                           {pedido.fechaActualizacion && (
-                            <p>
-                              <strong>Fecha de Finalización:</strong>{' '}
-                              <span style={{ color: '#4CAF50', fontWeight: '600' }}>
+                            <div style={{
+                              padding: '12px',
+                              background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                              borderRadius: '8px',
+                              border: '1px solid #86efac',
+                              marginTop: '8px'
+                            }}>
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                fontWeight: '600', 
+                                color: '#166534',
+                                marginBottom: '4px'
+                              }}>
+                                ✅ Finalizado
+                              </div>
+                              <div style={{ 
+                                fontSize: '0.9rem', 
+                                color: '#15803d',
+                                fontWeight: '500'
+                              }}>
                                 {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                                   year: 'numeric',
                                   month: '2-digit',
@@ -1673,8 +2232,8 @@ const DepositoPanel = () => {
                                   minute: '2-digit',
                                   hour12: false,
                                 })}
-                              </span>
-                            </p>
+                              </div>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1722,29 +2281,465 @@ const DepositoPanel = () => {
         )}
 
         {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'EQUIPOS' && filtroEstado !== 'REALIZADO' && (
+          <div>
+            {/* Buscador para pestañas sin sub-pestañas (PENDIENTE) */}
+            {filtroEstado !== 'EN_PREPARACION' && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '20px',
+                padding: '20px 40px',
+                margin: '0 20px 25px 20px',
+                background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+                border: '1px solid #e2e8f0',
+                borderRadius: '12px',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px'
+                }}>
+                  <span style={{ fontSize: '1.8rem' }}>📋</span>
+                  <h2 style={{
+                    margin: 0,
+                    fontSize: '1.5rem',
+                    fontWeight: '700',
+                    color: '#1e293b',
+                    letterSpacing: '-0.02em'
+                  }}>
+                    Planillas Pendientes
+                  </h2>
+                </div>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  flex: '0 0 400px',
+                  position: 'relative'
+                }}>
+                  <span style={{ fontSize: '1.2rem' }}>🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                    value={textoBusqueda}
+                    onChange={(e) => setTextoBusqueda(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 15px',
+                      border: '2px solid #e0e0e0',
+                      borderRadius: '8px',
+                      fontSize: '0.95rem',
+                      outline: 'none',
+                      transition: 'all 0.2s',
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = '#0f766e';
+                      e.target.style.boxShadow = '0 0 0 3px rgba(15, 118, 110, 0.1)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = '#e0e0e0';
+                      e.target.style.boxShadow = 'none';
+                    }}
+                  />
+                  {textoBusqueda && (
+                    <button
+                      onClick={() => setTextoBusqueda('')}
+                      style={{
+                        padding: '8px 12px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#666',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        transition: 'all 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = '#e5e7eb';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = '#f3f4f6';
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {/* Filtros de etapa para EN_PREPARACION */}
+            {filtroEstado === 'EN_PREPARACION' && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '20px',
+                padding: '20px 40px',
+                margin: '0 20px 25px 20px',
+                background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+                border: '1px solid #e2e8f0',
+                borderRadius: '12px',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
+              }}>
+                <div style={{ display: 'flex', gap: '10px', flex: 1 }}>
+                <button
+                  ref={(el) => { if (el) subPestanaButtonRefs.current[0] = el; }}
+                  onClick={() => setFiltroEtapaPreparacion('TODOS')}
+                  style={{
+                    padding: '10px 20px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.95rem',
+                    fontWeight: filtroEtapaPreparacion === 'TODOS' ? '600' : '500',
+                    backgroundColor: filtroEtapaPreparacion === 'TODOS' ? '#0f766e' : '#f3f4f6',
+                    color: filtroEtapaPreparacion === 'TODOS' ? 'white' : '#666',
+                    transition: 'all 0.2s',
+                    position: 'relative',
+                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 0 ? '3px solid #2196F3' : 'none',
+                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 0 ? '2px' : '0',
+                  }}
+                >
+                  Todos
+                  {getCantidadPorEtapa('TODOS') > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-8px',
+                        right: '-8px',
+                        backgroundColor: '#F44336',
+                        color: 'white',
+                        borderRadius: '50%',
+                        width: '24px',
+                        height: '24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      }}
+                    >
+                      {getCantidadPorEtapa('TODOS')}
+                    </span>
+                  )}
+                </button>
+                <button
+                  ref={(el) => { if (el) subPestanaButtonRefs.current[1] = el; }}
+                  onClick={() => setFiltroEtapaPreparacion('SIN_CONTROL')}
+                  style={{
+                    padding: '10px 20px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.95rem',
+                    fontWeight: filtroEtapaPreparacion === 'SIN_CONTROL' ? '600' : '500',
+                    backgroundColor: filtroEtapaPreparacion === 'SIN_CONTROL' ? '#0f766e' : '#f3f4f6',
+                    color: filtroEtapaPreparacion === 'SIN_CONTROL' ? 'white' : '#666',
+                    transition: 'all 0.2s',
+                    position: 'relative',
+                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 1 ? '3px solid #2196F3' : 'none',
+                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 1 ? '2px' : '0',
+                  }}
+                >
+                  Sin Control
+                  {getCantidadPorEtapa('SIN_CONTROL') > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-8px',
+                        right: '-8px',
+                        backgroundColor: '#F44336',
+                        color: 'white',
+                        borderRadius: '50%',
+                        width: '24px',
+                        height: '24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      }}
+                    >
+                      {getCantidadPorEtapa('SIN_CONTROL')}
+                    </span>
+                  )}
+                </button>
+                <button
+                  ref={(el) => { if (el) subPestanaButtonRefs.current[2] = el; }}
+                  onClick={() => setFiltroEtapaPreparacion('CONTROL')}
+                  style={{
+                    padding: '10px 20px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.95rem',
+                    fontWeight: filtroEtapaPreparacion === 'CONTROL' ? '600' : '500',
+                    backgroundColor: filtroEtapaPreparacion === 'CONTROL' ? '#0f766e' : '#f3f4f6',
+                    color: filtroEtapaPreparacion === 'CONTROL' ? 'white' : '#666',
+                    transition: 'all 0.2s',
+                    position: 'relative',
+                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 2 ? '3px solid #2196F3' : 'none',
+                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 2 ? '2px' : '0',
+                  }}
+                >
+                  Control
+                  {getCantidadPorEtapa('CONTROL') > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-8px',
+                        right: '-8px',
+                        backgroundColor: '#F44336',
+                        color: 'white',
+                        borderRadius: '50%',
+                        width: '24px',
+                        height: '24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      }}
+                    >
+                      {getCantidadPorEtapa('CONTROL')}
+                    </span>
+                  )}
+                </button>
+                <button
+                  ref={(el) => { if (el) subPestanaButtonRefs.current[3] = el; }}
+                  onClick={() => setFiltroEtapaPreparacion('PENDIENTE_CARGA')}
+                  style={{
+                    padding: '10px 20px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.95rem',
+                    fontWeight: filtroEtapaPreparacion === 'PENDIENTE_CARGA' ? '600' : '500',
+                    backgroundColor: filtroEtapaPreparacion === 'PENDIENTE_CARGA' ? '#0f766e' : '#f3f4f6',
+                    color: filtroEtapaPreparacion === 'PENDIENTE_CARGA' ? 'white' : '#666',
+                    transition: 'all 0.2s',
+                    position: 'relative',
+                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 3 ? '3px solid #2196F3' : 'none',
+                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 3 ? '2px' : '0',
+                  }}
+                >
+                  Pendiente de Carga
+                  {getCantidadPorEtapa('PENDIENTE_CARGA') > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-8px',
+                        right: '-8px',
+                        backgroundColor: '#F44336',
+                        color: 'white',
+                        borderRadius: '50%',
+                        width: '24px',
+                        height: '24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      }}
+                    >
+                      {getCantidadPorEtapa('PENDIENTE_CARGA')}
+                    </span>
+                  )}
+                </button>
+                </div>
+                {/* Buscador avanzado */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  flex: '0 0 400px',
+                  position: 'relative'
+                }}>
+                  <span style={{ fontSize: '1.2rem' }}>🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                    value={textoBusqueda}
+                    onChange={(e) => setTextoBusqueda(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 15px',
+                      border: '2px solid #e0e0e0',
+                      borderRadius: '8px',
+                      fontSize: '0.95rem',
+                      outline: 'none',
+                      transition: 'all 0.2s',
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = '#0f766e';
+                      e.target.style.boxShadow = '0 0 0 3px rgba(15, 118, 110, 0.1)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = '#e0e0e0';
+                      e.target.style.boxShadow = 'none';
+                    }}
+                  />
+                  {textoBusqueda && (
+                    <button
+                      onClick={() => setTextoBusqueda('')}
+                      style={{
+                        padding: '8px 12px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#666',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        transition: 'all 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = '#e5e7eb';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = '#f3f4f6';
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           <div className="pedidos-grid">
-            {pedidos.filter(pedido => pedido.estado === filtroEstado).map((pedido, index) => (
+            {pedidos.filter(pedido => {
+              if (pedido.estado !== filtroEstado) return false;
+              // Si estamos en EN_PREPARACION, aplicar filtro de etapa
+              if (filtroEstado === 'EN_PREPARACION') {
+                if (filtroEtapaPreparacion === 'TODOS') {
+                  // Aplicar búsqueda
+                  if (textoBusqueda.trim()) {
+                    const busqueda = textoBusqueda.toLowerCase().trim();
+                    const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                    const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                    const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                    const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                    return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+                  }
+                  return true;
+                }
+                if (filtroEtapaPreparacion === 'SIN_CONTROL') {
+                  if (!pedido.etapaPreparacion) {
+                    // Aplicar búsqueda
+                    if (textoBusqueda.trim()) {
+                      const busqueda = textoBusqueda.toLowerCase().trim();
+                      const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                      const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                      const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                      const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                      return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+                    }
+                    return true;
+                  }
+                  return false;
+                }
+                if (filtroEtapaPreparacion === 'CONTROL') {
+                  if (pedido.etapaPreparacion === 'CONTROL') {
+                    // Aplicar búsqueda
+                    if (textoBusqueda.trim()) {
+                      const busqueda = textoBusqueda.toLowerCase().trim();
+                      const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                      const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                      const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                      const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                      return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+                    }
+                    return true;
+                  }
+                  return false;
+                }
+                if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') {
+                  if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
+                    // Aplicar búsqueda
+                    if (textoBusqueda.trim()) {
+                      const busqueda = textoBusqueda.toLowerCase().trim();
+                      const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                      const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                      const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                      const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                      return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+                    }
+                    return true;
+                  }
+                  return false;
+                }
+              }
+              // Para otras pestañas, también aplicar búsqueda si existe
+              if (textoBusqueda.trim()) {
+                const busqueda = textoBusqueda.toLowerCase().trim();
+                const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+              }
+              return true;
+            }).map((pedido, index) => (
             <div 
               key={pedido.id} 
               className="pedido-card deposito-pedido-card"
               data-pedido-id={pedido.id}
-              tabIndex={(filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') ? 0 : -1}
+              tabIndex={(filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PREPARACION') ? 0 : -1}
               style={{
-                outline: (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') && pedidoSeleccionadoIndex === index 
+                outline: (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PREPARACION') && pedidoSeleccionadoIndex === index 
                   ? '3px solid #2196F3' 
                   : 'none',
-                outlineOffset: (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') && pedidoSeleccionadoIndex === index 
+                outlineOffset: (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PREPARACION') && pedidoSeleccionadoIndex === index 
                   ? '2px' 
                   : '0',
               }}
               onFocus={() => {
-                if (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PROCESO') {
+                if (filtroEstado === 'PENDIENTE' || filtroEstado === 'EN_PREPARACION') {
                   setPedidoSeleccionadoIndex(index);
                 }
               }}
             >
               <div className="pedido-header">
-                <h3>Planilla: {pedido.numeroPlanilla}</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.5rem',
+                    color: 'white',
+                    fontWeight: '700',
+                    boxShadow: '0 4px 12px rgba(15, 118, 110, 0.3)'
+                  }}>
+                    📦
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
+                      Planilla #{pedido.numeroPlanilla}
+                    </h3>
+                    <div style={{ 
+                      fontSize: '0.85rem', 
+                      color: '#64748b', 
+                      marginTop: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                      })}</span>
+                    </div>
+                  </div>
+                </div>
                 <span
                   className="prioridad-badge"
                   style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
@@ -1752,69 +2747,100 @@ const DepositoPanel = () => {
                   {pedido.prioridad}
                 </span>
               </div>
+              
               <div className="pedido-info">
-                <div style={{ marginBottom: '10px' }}>
-                  <strong style={{ display: 'block', marginBottom: '5px', color: '#333' }}>Transportista:</strong>
-                  {pedido.transportistaChofer && pedido.transportistaVehiculo ? (
-                    <div style={{ marginLeft: '0', color: '#666' }}>
-                      {pedido.transportistaCodigoInterno && (
-                        <span style={{ color: '#999', fontSize: '0.9em' }}>
-                          {pedido.transportistaCodigoInterno} -{' '}
-                        </span>
-                      )}
-                      {pedido.transportistaChofer} - {pedido.transportistaVehiculo}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '16px',
+                  marginBottom: '16px'
+                }}>
+                  <div className="info-item">
+                    <div className="info-label">🚚 Transporte</div>
+                    <div className="info-value">
+                      {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
                     </div>
-                  ) : (
-                    <div style={{ marginLeft: '0', color: '#666' }}>
-                      {pedido.transportista || 'Sin transportista'}
+                  </div>
+                  {pedido.cantidad && (
+                    <div className="info-item">
+                      <div className="info-label">📊 Cantidad</div>
+                      <div className="info-value">{pedido.cantidad}</div>
                     </div>
                   )}
+                    </div>
+                
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '16px',
+                  marginBottom: '16px'
+                }}>
+                  {pedido.zonaNombre && (
+                    <div className="info-item">
+                      <div className="info-label">📍 Zona</div>
+                      <div className="info-value">{pedido.zonaNombre}</div>
+                    </div>
+                  )}
+                  {pedido.vueltaNombre && (
+                    <div className="info-item">
+                      <div className="info-label">🔄 Vuelta</div>
+                      <div className="info-value">{pedido.vueltaNombre}</div>
                 </div>
-                {pedido.zonaNombre && (
-                  <p>
-                    <strong>Zona:</strong> {pedido.zonaNombre}
-                  </p>
-                )}
-                <p>
-                  <strong>Estado:</strong>{' '}
+                  )}
+                </div>
+                
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '16px',
+                  marginBottom: '16px'
+                }}>
+                  <div className="info-item">
+                    <div className="info-label">👥 Equipo</div>
+                    <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
+                  </div>
+                  <div className="info-item">
+                    <div className="info-label">📋 Estado</div>
                   <span
                     className="estado-badge"
-                    style={{ backgroundColor: getEstadoColor(pedido.estado) }}
+                    style={{ backgroundColor: getEstadoColor(pedido) }}
                   >
-                    {pedido.estado.replace('_', ' ')}
+                    {getEstadoTexto(pedido)}
                   </span>
-                </p>
-                <p>
-                  <strong>Equipo Asignado:</strong>{' '}
-                  {pedido.grupoNombre || 'Sin asignar'}
-                </p>
-                {pedido.fechaCreacion && (
-                  <p>
-                    <strong>Hora de Carga:</strong>{' '}
-                    <span style={{ color: '#666' }}>
-                      {new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })}
-                    </span>
-                  </p>
-                )}
+                  </div>
+                </div>
+                
                 {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
-                  <p>
-                    <strong>Fecha de Finalización:</strong>{' '}
-                    <span style={{ color: '#4CAF50', fontWeight: '600' }}>
+                  <div style={{
+                    padding: '12px',
+                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                    borderRadius: '8px',
+                    border: '1px solid #86efac',
+                    marginTop: '8px'
+                  }}>
+                    <div style={{ 
+                      fontSize: '0.85rem', 
+                      fontWeight: '600', 
+                      color: '#166534',
+                      marginBottom: '4px'
+                    }}>
+                      ✅ Finalizado
+                    </div>
+                    <div style={{ 
+                      fontSize: '0.9rem', 
+                      color: '#15803d',
+                      fontWeight: '500'
+                    }}>
                       {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                         year: 'numeric',
                         month: '2-digit',
                         day: '2-digit',
                         hour: '2-digit',
                         minute: '2-digit',
-                        second: '2-digit',
                         hour12: false,
                       })}
-                    </span>
-                  </p>
+                    </div>
+                  </div>
                 )}
               </div>
               {pedido.estado !== 'REALIZADO' && (
@@ -1910,27 +2936,44 @@ const DepositoPanel = () => {
                     {pedido.estado === 'PENDIENTE' && (
                       <button
                         ref={(el) => {
-                          if (el) procesarButtonRefs.current[pedido.id] = el;
+                          if (el) prepararButtonRefs.current[pedido.id] = el;
                         }}
                         className="btn-primary"
-                        onClick={() => handleCambiarEstado(pedido.id, 'EN_PROCESO')}
+                        onClick={() => handleCambiarEstado(pedido.id, 'EN_PREPARACION')}
                         style={{
-                          backgroundColor: '#2196F3',
+                          background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)',
                           color: 'white',
                           border: 'none',
-                          padding: '10px 20px',
-                          borderRadius: '5px',
+                          padding: '12px 24px',
+                          borderRadius: '10px',
                           cursor: 'pointer',
                           fontSize: '14px',
-                          fontWeight: 'bold',
+                          fontWeight: '600',
+                          letterSpacing: '0.3px',
                           width: '100%',
+                          boxShadow: '0 4px 12px rgba(15, 118, 110, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)',
+                          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                          position: 'relative',
+                          overflow: 'hidden',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.transform = 'translateY(-2px)';
+                          e.target.style.boxShadow = '0 6px 16px rgba(15, 118, 110, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
+                          e.target.style.background = 'linear-gradient(135deg, #14b8a6 0%, #0f766e 100%)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.transform = 'translateY(0)';
+                          e.target.style.boxShadow = '0 4px 12px rgba(15, 118, 110, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
+                          e.target.style.background = 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)';
                         }}
                       >
-                        Procesar
+                        <span style={{ marginRight: '6px' }}>⚙️</span>
+                        Preparar
                       </button>
                     )}
-                    {pedido.estado === 'EN_PROCESO' && (
-                      <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+                    {pedido.estado === 'EN_PREPARACION' && (
+                      <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+                        {pedido.etapaPreparacion !== 'PENDIENTE_CARGA' && (
                         <button
                           ref={(el) => {
                             if (el) volverPendienteButtonRefs.current[pedido.id] = el;
@@ -1940,48 +2983,120 @@ const DepositoPanel = () => {
                           onClick={() => handleCambiarEstado(pedido.id, 'PENDIENTE')}
                           style={{
                             flex: 1,
-                            backgroundColor: '#FF9800',
+                            background: 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)',
                             color: 'white',
                             border: 'none',
-                            padding: '10px 20px',
-                            borderRadius: '5px',
+                            padding: '12px 24px',
+                            borderRadius: '10px',
                             cursor: 'pointer',
                             fontSize: '14px',
-                            fontWeight: 'bold',
-                            outline: botonSeleccionadoEnProceso[pedido.id] === 'volver' ? '3px solid #2196F3' : 'none',
-                            outlineOffset: botonSeleccionadoEnProceso[pedido.id] === 'volver' ? '2px' : '0',
+                            fontWeight: '600',
+                            letterSpacing: '0.3px',
+                            boxShadow: '0 4px 12px rgba(107, 114, 128, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)',
+                            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            outline: botonSeleccionadoEnPreparacion[pedido.id] === 'volver' ? '3px solid #2196F3' : 'none',
+                            outlineOffset: botonSeleccionadoEnPreparacion[pedido.id] === 'volver' ? '2px' : '0',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.target.style.transform = 'translateY(-2px)';
+                            e.target.style.boxShadow = '0 6px 16px rgba(107, 114, 128, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
+                            e.target.style.background = 'linear-gradient(135deg, #9CA3AF 0%, #6B7280 100%)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.target.style.transform = 'translateY(0)';
+                            e.target.style.boxShadow = '0 4px 12px rgba(107, 114, 128, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
+                            e.target.style.background = 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)';
                           }}
                           onFocus={() => {
-                            setBotonSeleccionadoEnProceso({ ...botonSeleccionadoEnProceso, [pedido.id]: 'volver' });
+                              setBotonSeleccionadoEnPreparacion({ ...botonSeleccionadoEnPreparacion, [pedido.id]: 'volver' });
                           }}
                         >
+                          <span style={{ marginRight: '6px' }}>↩️</span>
                           Volver a Pendiente
                         </button>
+                        )}
                         <button
                           ref={(el) => {
                             if (el) finalizarButtonRefs.current[pedido.id] = el;
                           }}
                           data-pedido-id={pedido.id}
                           className="btn-success"
-                          onClick={() => handleCambiarEstado(pedido.id, 'REALIZADO')}
+                          onClick={() => handleAvanzarEtapa(pedido.id)}
                           style={{
-                            flex: 1,
-                            backgroundColor: '#0f766e',
+                            flex: pedido.etapaPreparacion === 'PENDIENTE_CARGA' ? 1 : 1,
+                            width: pedido.etapaPreparacion === 'PENDIENTE_CARGA' ? '100%' : 'auto',
+                            background: !pedido.etapaPreparacion 
+                              ? 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)' // Azul para "Control"
+                              : pedido.etapaPreparacion === 'CONTROL' 
+                              ? 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)' // Naranja para "Pendiente de Carga"
+                              : 'linear-gradient(135deg, #4CAF50 0%, #388E3C 100%)', // Verde para "Finalizar"
                             color: 'white',
                             border: 'none',
-                            padding: '10px 20px',
-                            borderRadius: '5px',
+                            padding: '12px 28px',
+                            borderRadius: '10px',
                             cursor: 'pointer',
                             fontSize: '14px',
-                            fontWeight: 'bold',
-                            outline: botonSeleccionadoEnProceso[pedido.id] === 'finalizar' ? '3px solid #2196F3' : 'none',
-                            outlineOffset: botonSeleccionadoEnProceso[pedido.id] === 'finalizar' ? '2px' : '0',
+                            fontWeight: '600',
+                            letterSpacing: '0.3px',
+                            boxShadow: !pedido.etapaPreparacion 
+                              ? '0 4px 12px rgba(33, 150, 243, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)'
+                              : pedido.etapaPreparacion === 'CONTROL'
+                              ? '0 4px 12px rgba(255, 152, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)'
+                              : '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)',
+                            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            outline: botonSeleccionadoEnPreparacion[pedido.id] === 'finalizar' ? '3px solid #2196F3' : 'none',
+                            outlineOffset: botonSeleccionadoEnPreparacion[pedido.id] === 'finalizar' ? '2px' : '0',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.target.style.transform = 'translateY(-2px)';
+                            if (!pedido.etapaPreparacion) {
+                              e.target.style.background = 'linear-gradient(135deg, #42A5F5 0%, #1E88E5 100%)';
+                              e.target.style.boxShadow = '0 6px 16px rgba(33, 150, 243, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
+                            } else if (pedido.etapaPreparacion === 'CONTROL') {
+                              e.target.style.background = 'linear-gradient(135deg, #FFA726 0%, #FB8C00 100%)';
+                              e.target.style.boxShadow = '0 6px 16px rgba(255, 152, 0, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
+                            } else {
+                              e.target.style.background = 'linear-gradient(135deg, #66BB6A 0%, #43A047 100%)';
+                              e.target.style.boxShadow = '0 6px 16px rgba(76, 175, 80, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            e.target.style.transform = 'translateY(0)';
+                            if (!pedido.etapaPreparacion) {
+                              e.target.style.background = 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)';
+                              e.target.style.boxShadow = '0 4px 12px rgba(33, 150, 243, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
+                            } else if (pedido.etapaPreparacion === 'CONTROL') {
+                              e.target.style.background = 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)';
+                              e.target.style.boxShadow = '0 4px 12px rgba(255, 152, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
+                            } else {
+                              e.target.style.background = 'linear-gradient(135deg, #4CAF50 0%, #388E3C 100%)';
+                              e.target.style.boxShadow = '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
+                            }
                           }}
                           onFocus={() => {
-                            setBotonSeleccionadoEnProceso({ ...botonSeleccionadoEnProceso, [pedido.id]: 'finalizar' });
+                            setBotonSeleccionadoEnPreparacion({ ...botonSeleccionadoEnPreparacion, [pedido.id]: 'finalizar' });
                           }}
                         >
+                          {!pedido.etapaPreparacion ? (
+                            <>
+                              <span style={{ marginRight: '6px' }}>✓</span>
+                              Control
+                            </>
+                          ) : pedido.etapaPreparacion === 'CONTROL' ? (
+                            <>
+                              <span style={{ marginRight: '6px' }}>📦</span>
+                              Pendiente de Carga
+                            </>
+                          ) : (
+                            <>
+                              <span style={{ marginRight: '6px' }}>✅</span>
                           Finalizar
+                            </>
+                          )}
                         </button>
                       </div>
                     )}
@@ -1990,7 +3105,16 @@ const DepositoPanel = () => {
               )}
             </div>
           ))}
-            {pedidos.length === 0 && !loading && (
+          {pedidos.filter(pedido => {
+            if (pedido.estado !== filtroEstado) return false;
+            if (filtroEstado === 'EN_PREPARACION') {
+              if (filtroEtapaPreparacion === 'TODOS') return true;
+              if (filtroEtapaPreparacion === 'SIN_CONTROL') return !pedido.etapaPreparacion;
+              if (filtroEtapaPreparacion === 'CONTROL') return pedido.etapaPreparacion === 'CONTROL';
+              if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') return pedido.etapaPreparacion === 'PENDIENTE_CARGA';
+            }
+            return true;
+          }).length === 0 && !loading && (
               <div className="no-pedidos" style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -2005,7 +3129,7 @@ const DepositoPanel = () => {
                   marginBottom: '20px',
                   opacity: 0.3,
                 }}>
-                  {filtroEstado === 'PENDIENTE' ? '📋' : filtroEstado === 'EN_PROCESO' ? '⚙️' : '✅'}
+                  {filtroEstado === 'PENDIENTE' ? '📋' : filtroEstado === 'EN_PREPARACION' ? '⚙️' : '✅'}
                 </div>
                 <h3 style={{
                   fontSize: '1.5rem',
@@ -2015,8 +3139,14 @@ const DepositoPanel = () => {
                 }}>
                   {filtroEstado === 'PENDIENTE' 
                     ? 'No hay pedidos pendientes' 
-                    : filtroEstado === 'EN_PROCESO' 
-                    ? 'No hay pedidos en proceso'
+                    : filtroEstado === 'EN_PREPARACION' 
+                    ? filtroEtapaPreparacion === 'TODOS' 
+                      ? 'No hay pedidos en preparación'
+                      : filtroEtapaPreparacion === 'SIN_CONTROL'
+                      ? 'No hay pedidos sin control'
+                      : filtroEtapaPreparacion === 'CONTROL'
+                      ? 'No hay pedidos en control'
+                      : 'No hay pedidos pendientes de carga'
                     : 'No hay pedidos'}
                 </h3>
                 <p style={{
@@ -2027,12 +3157,13 @@ const DepositoPanel = () => {
                 }}>
                   {filtroEstado === 'PENDIENTE' 
                     ? 'Los nuevos pedidos aparecerán aquí cuando sean creados desde el panel de administración.'
-                    : filtroEstado === 'EN_PROCESO' 
-                    ? 'Los pedidos que estén siendo procesados aparecerán en esta sección.'
+                    : filtroEstado === 'EN_PREPARACION' 
+                    ? 'Los pedidos que estén siendo preparados aparecerán en esta sección.'
                     : 'No hay pedidos para mostrar en este momento.'}
                 </p>
               </div>
             )}
+          </div>
           </div>
         )}
       </div>
@@ -2148,14 +3279,16 @@ const DepositoPanel = () => {
                 <thead>
                   <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Número de Planilla</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transportista</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transporte</th>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Zona</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Cantidad</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Vuelta</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pedidosResumen.length === 0 ? (
                     <tr>
-                      <td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                         No hay planillas para este día
                       </td>
                     </tr>
@@ -2166,23 +3299,16 @@ const DepositoPanel = () => {
                           {pedido.numeroPlanilla}
                         </td>
                         <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.transportistaChofer && pedido.transportistaVehiculo ? (
-                            <div>
-                              {pedido.transportistaCodigoInterno && (
-                                <span style={{ color: '#999', fontSize: '0.9em' }}>
-                                  {pedido.transportistaCodigoInterno} -{' '}
-                                </span>
-                              )}
-                              {pedido.transportistaChofer} - {pedido.transportistaVehiculo}
-                            </div>
-                          ) : (
-                            <span style={{ color: '#999', fontStyle: 'italic' }}>
-                              {pedido.transportista || 'Sin transportista'}
-                            </span>
-                          )}
+                          {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
                         </td>
                         <td style={{ padding: '12px', color: '#666' }}>
                           {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
+                          {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
+                          {pedido.vueltaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin vuelta</span>}
                         </td>
                       </tr>
                     ))

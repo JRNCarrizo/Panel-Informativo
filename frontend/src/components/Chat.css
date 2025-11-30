@@ -97,21 +97,22 @@
 }
 
 .own-message {
-  align-self: flex-start;
-  background: white;
-  color: #333;
-  border: 1px solid #e5e7eb;
+  align-self: flex-start !important;
+  background: white !important;
+  color: #333 !important;
+  border: 1px solid #e5e7eb !important;
   /* 3 esquinas redondeadas, esquina recta abajo-izquierda */
   border-radius: 18px 18px 18px 0px !important;
   margin-bottom: 8px;
   margin-left: 8px;
+  margin-right: auto;
 }
 
 /* Colores para chat en panel Admin (usando colores del panel Depósito) */
 .chat-admin .own-message {
-  background: white;
-  color: #333;
-  border: 1px solid #e5e7eb;
+  background: white !important;
+  color: #333 !important;
+  border: 1px solid #e5e7eb !important;
 }
 
 .chat-header-admin {
@@ -131,19 +132,38 @@
 }
 
 .other-message {
-  align-self: flex-end;
-  background: #1e40af;
+  align-self: flex-end !important;
+  background: #1e40af !important;
   color: white !important;
   /* 3 esquinas redondeadas, esquina recta arriba-derecha */
   border-radius: 18px 0px 18px 18px !important;
   margin-bottom: 8px;
   margin-right: 8px;
+  margin-left: auto;
 }
 
 /* Colores para chat en panel Admin (usando colores del panel Depósito) */
 .chat-admin .other-message {
   background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
   color: white !important;
+}
+
+/* Colores para chat en panel Depósito */
+.chat-deposito .own-message {
+  align-self: flex-start !important;
+  background: white !important;
+  color: #333 !important;
+  border: 1px solid #e5e7eb !important;
+  margin-left: 8px;
+  margin-right: auto;
+}
+
+.chat-deposito .other-message {
+  align-self: flex-end !important;
+  background: #2563eb !important;
+  color: white !important;
+  margin-right: 8px;
+  margin-left: auto;
 }
 
 .other-message.unread {

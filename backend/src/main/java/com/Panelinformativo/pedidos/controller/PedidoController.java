@@ -79,6 +79,18 @@ public class PedidoController {
         }
     }
 
+    @PutMapping("/{id}/avanzar-etapa")
+    @PreAuthorize("hasRole('DEPOSITO')")
+    public ResponseEntity<?> avanzarEtapaPreparacion(@PathVariable Long id) {
+        try {
+            PedidoDTO pedido = pedidoService.avanzarEtapaPreparacion(id);
+            webSocketService.notificarActualizacionPedido(pedido);
+            return ResponseEntity.ok(pedido);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     @PutMapping("/{id}/grupo")
     @PreAuthorize("hasRole('DEPOSITO')")
     public ResponseEntity<?> asignarGrupo(@PathVariable Long id, @RequestBody Long grupoId) {

@@ -6,6 +6,7 @@ import { transportistaService } from '../services/transportistaService';
 import { grupoService } from '../services/grupoService';
 import { mensajeService } from '../services/mensajeService';
 import { zonaService } from '../services/zonaService';
+import { vueltaService } from '../services/vueltaService';
 import { connectWebSocket, disconnectWebSocket } from '../services/websocketService';
 import Chat from './Chat';
 import './AdminPanel.css';
@@ -17,16 +18,22 @@ const AdminPanel = () => {
   const [transportistas, setTransportistas] = useState([]);
   const [equipos, setEquipos] = useState([]);
   const [zonas, setZonas] = useState([]);
+  const [vueltas, setVueltas] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showUsuarioModal, setShowUsuarioModal] = useState(false);
   const [showTransportistaModal, setShowTransportistaModal] = useState(false);
+  const [transportistaEditando, setTransportistaEditando] = useState(null);
   const [showZonaModal, setShowZonaModal] = useState(false);
   const [zonaEditando, setZonaEditando] = useState(null);
+  const [showVueltaModal, setShowVueltaModal] = useState(false);
+  const [vueltaEditando, setVueltaEditando] = useState(null);
   const [showTransportistaTooltip, setShowTransportistaTooltip] = useState(false);
   const [formData, setFormData] = useState({
     numeroPlanilla: '',
-    transportistaId: '',
+    transportistaNombre: '', // Para el buscador avanzado
     zonaNombre: '',
+    cantidad: '',
+    vueltaNombre: '',
     prioridad: 'NORMAL',
   });
   const [zonaSugerencias, setZonaSugerencias] = useState([]);
@@ -34,10 +41,21 @@ const AdminPanel = () => {
   const [indiceZonaSeleccionada, setIndiceZonaSeleccionada] = useState(-1);
   const zonaInputRef = useRef(null);
   const zonaSugerenciasRef = useRef(null);
+  const [transportistaSugerencias, setTransportistaSugerencias] = useState([]);
+  const [mostrarSugerenciasTransportista, setMostrarSugerenciasTransportista] = useState(false);
+  const [indiceTransportistaSeleccionada, setIndiceTransportistaSeleccionada] = useState(-1);
+  const transportistaSugerenciasRef = useRef(null);
+  const [vueltaSugerencias, setVueltaSugerencias] = useState([]);
+  const [mostrarSugerenciasVuelta, setMostrarSugerenciasVuelta] = useState(false);
+  const [indiceVueltaSeleccionada, setIndiceVueltaSeleccionada] = useState(-1);
+  const vueltaInputRef = useRef(null);
+  const vueltaSugerenciasRef = useRef(null);
   // Refs para los campos del formulario de pedidos
   const numeroPlanillaRef = useRef(null);
   const transportistaRef = useRef(null);
   const zonaRef = useRef(null);
+  const cantidadRef = useRef(null);
+  const vueltaRef = useRef(null);
   const prioridadRef = useRef(null);
   // Refs para los campos del formulario de transportistas
   const codigoInternoRef = useRef(null);
@@ -56,6 +74,7 @@ const AdminPanel = () => {
   });
   const [idPrimerAdmin, setIdPrimerAdmin] = useState(null);
   const [transportistaForm, setTransportistaForm] = useState({
+    nombre: '',
     codigoInterno: '',
     chofer: '',
     vehiculo: '',
@@ -64,6 +83,10 @@ const AdminPanel = () => {
     nombre: '',
   });
   const zonaNombreRef = useRef(null);
+  const [vueltaForm, setVueltaForm] = useState({
+    nombre: '',
+  });
+  const vueltaNombreRef = useRef(null);
   const [activeTab, setActiveTab] = useState('pedidos');
   // Estado para el modal de resumen
   const [showResumenModal, setShowResumenModal] = useState(false);
@@ -72,6 +95,10 @@ const AdminPanel = () => {
   // Estado para el chat
   const [showChat, setShowChat] = useState(false);
   const [cantidadMensajesNoLeidos, setCantidadMensajesNoLeidos] = useState(0);
+  // Estado para el buscador avanzado
+  const [textoBusqueda, setTextoBusqueda] = useState('');
+  // Estado para el filtro de pedidos
+  const [filtroPedidos, setFiltroPedidos] = useState('TODOS'); // 'TODOS', 'PENDIENTE', 'EN_PREPARACION', 'CONTROLADO', 'PENDIENTE_CARGA'
   // Cargar pedidos realizados vistos desde localStorage
   const [pedidosRealizadosVistos, setPedidosRealizadosVistos] = useState(() => {
     try {
@@ -156,6 +183,10 @@ const AdminPanel = () => {
     cargarZonas().catch(err => {
       console.warn('Error al cargar zonas (puede ser normal si el backend no se reinició):', err);
     });
+    // Cargar vueltas en paralelo pero no esperar si falla
+    cargarVueltas().catch(err => {
+      console.warn('Error al cargar vueltas (puede ser normal si el backend no se reinició):', err);
+    });
     // Cargar ID del primer admin
     cargarIdPrimerAdmin();
   };
@@ -211,6 +242,19 @@ const AdminPanel = () => {
     }
   };
 
+  const cargarVueltas = async () => {
+    try {
+      const response = await vueltaService.obtenerTodas();
+      setVueltas(response.data || []);
+    } catch (error) {
+      console.error('Error al cargar vueltas:', error);
+      if (error.response?.status === 403) {
+        console.warn('Error 403 al cargar vueltas. Verifica que el backend esté corriendo y que tengas sesión activa.');
+      }
+      setVueltas([]);
+    }
+  };
+
   const cargarPedidos = async () => {
     try {
       if (activeTab === 'realizados') {
@@ -248,10 +292,12 @@ const AdminPanel = () => {
     if (activeTab === 'pedidos' || activeTab === 'realizados') {
       setPedidos([]);
       cargarSegunPestaña();
-        } else if (activeTab === 'equipos') {
+    } else if (activeTab === 'equipos') {
       cargarEquipos();
     } else if (activeTab === 'zonas') {
       cargarZonas();
+    } else if (activeTab === 'vueltas') {
+      cargarVueltas();
     }
   }, [activeTab]);
 
@@ -278,6 +324,11 @@ const AdminPanel = () => {
         } else if (activeTab === 'zonas' && !showZonaModal) {
           event.preventDefault();
           setShowZonaModal(true);
+        } else if (activeTab === 'vueltas' && !showVueltaModal) {
+          event.preventDefault();
+          setVueltaForm({ nombre: '' });
+          setVueltaEditando(null);
+          setShowVueltaModal(true);
         }
       }
     };
@@ -359,7 +410,7 @@ const AdminPanel = () => {
       if (event.key === 'Escape') {
         if (showModal) {
           setShowModal(false);
-          setFormData({ numeroPlanilla: '', transportistaId: '', prioridad: 'NORMAL' });
+          setFormData({ numeroPlanilla: '', transportistaNombre: '', prioridad: 'NORMAL' });
         } else if (showTransportistaModal) {
           setShowTransportistaModal(false);
           setTransportistaForm({ codigoInterno: '', chofer: '', vehiculo: '' });
@@ -370,10 +421,16 @@ const AdminPanel = () => {
           setShowZonaModal(false);
           setZonaForm({ nombre: '' });
           setZonaEditando(null);
+        } else if (showVueltaModal) {
+          setShowVueltaModal(false);
+          setVueltaForm({ nombre: '' });
+          setVueltaEditando(null);
         } else if (showChat) {
           setShowChat(false);
         } else if (mostrarSugerenciasZona) {
           setMostrarSugerenciasZona(false);
+        } else if (mostrarSugerenciasVuelta) {
+          setMostrarSugerenciasVuelta(false);
         }
       }
     };
@@ -388,7 +445,7 @@ const AdminPanel = () => {
   useEffect(() => {
     const handleKeyDown = (event) => {
       // No navegar si hay un modal abierto o si el usuario está escribiendo
-      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal) {
+      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal) {
         return;
       }
 
@@ -403,7 +460,7 @@ const AdminPanel = () => {
         return;
       }
 
-      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'usuarios', 'equipos'];
+      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'equipos'];
       const currentIndex = tabs.indexOf(activeTab);
 
       if (event.key === 'ArrowLeft' && currentIndex > 0) {
@@ -428,6 +485,42 @@ const AdminPanel = () => {
     } catch (error) {
       console.error('Error al cargar usuarios:', error);
     }
+  };
+
+  const buscarTransportistas = async (busqueda) => {
+    if (busqueda.trim().length === 0) {
+      setTransportistaSugerencias([]);
+      setMostrarSugerenciasTransportista(false);
+      setIndiceTransportistaSeleccionada(-1);
+      return;
+    }
+    try {
+      const response = await transportistaService.buscar(busqueda);
+      setTransportistaSugerencias(response.data || []);
+      setMostrarSugerenciasTransportista(true);
+      setIndiceTransportistaSeleccionada(-1);
+    } catch (error) {
+      console.error('Error al buscar transportes:', error);
+      setTransportistaSugerencias([]);
+      setIndiceTransportistaSeleccionada(-1);
+    }
+  };
+
+  const handleTransportistaInputChange = (e) => {
+    const valor = e.target.value;
+    setFormData({ ...formData, transportistaNombre: valor });
+    buscarTransportistas(valor);
+    setIndiceTransportistaSeleccionada(-1);
+  };
+
+  const seleccionarTransportista = (transportista) => {
+    setFormData({ 
+      ...formData, 
+      transportistaNombre: transportista.nombre
+    });
+    setTransportistaSugerencias([]);
+    setMostrarSugerenciasTransportista(false);
+    setIndiceTransportistaSeleccionada(-1);
   };
 
   const buscarZonas = async (busqueda) => {
@@ -463,17 +556,84 @@ const AdminPanel = () => {
     setIndiceZonaSeleccionada(-1);
   };
 
+  const buscarVueltas = async (busqueda) => {
+    if (busqueda.trim().length === 0) {
+      setVueltaSugerencias([]);
+      setMostrarSugerenciasVuelta(false);
+      setIndiceVueltaSeleccionada(-1);
+      return;
+    }
+    try {
+      const response = await vueltaService.buscar(busqueda);
+      setVueltaSugerencias(response.data || []);
+      setMostrarSugerenciasVuelta(true);
+      setIndiceVueltaSeleccionada(-1); // Resetear índice al buscar
+    } catch (error) {
+      console.error('Error al buscar vueltas:', error);
+      setVueltaSugerencias([]);
+      setIndiceVueltaSeleccionada(-1);
+    }
+  };
+
+  const handleVueltaInputChange = (e) => {
+    const valor = e.target.value;
+    setFormData({ ...formData, vueltaNombre: valor });
+    buscarVueltas(valor);
+    setIndiceVueltaSeleccionada(-1); // Resetear índice al escribir
+  };
+
+  const seleccionarVuelta = (vueltaNombre) => {
+    setFormData({ ...formData, vueltaNombre });
+    setVueltaSugerencias([]);
+    setMostrarSugerenciasVuelta(false);
+    setIndiceVueltaSeleccionada(-1);
+  };
+
   const handleCrearPedido = async (e) => {
     e.preventDefault();
     try {
-      await pedidoService.crear(formData);
+      // Validar que la cantidad esté presente
+      if (!formData.cantidad || formData.cantidad.trim() === '' || parseInt(formData.cantidad) <= 0) {
+        alert('La cantidad es obligatoria y debe ser mayor a 0');
+        cantidadRef.current?.focus();
+        return;
+      }
+
+      // Validar que la vuelta esté presente
+      if (!formData.vueltaNombre || formData.vueltaNombre.trim() === '') {
+        alert('La vuelta es obligatoria');
+        vueltaRef.current?.focus();
+        return;
+      }
+
+      // Validar que el transporte esté presente
+      if (!formData.transportistaNombre || formData.transportistaNombre.trim() === '') {
+        alert('El transporte es obligatorio');
+        transportistaRef.current?.focus();
+        return;
+      }
+
+      // Convertir cantidad a número si existe y limpiar vueltaNombre
+      const dataToSend = {
+        numeroPlanilla: formData.numeroPlanilla,
+        transportistaNombre: formData.transportistaNombre.trim(),
+        zonaNombre: formData.zonaNombre && formData.zonaNombre.trim() !== '' ? formData.zonaNombre.trim() : null,
+        cantidad: parseInt(formData.cantidad),
+        vueltaNombre: formData.vueltaNombre.trim(),
+        prioridad: formData.prioridad
+      };
+      console.log('Datos a enviar:', dataToSend);
+      await pedidoService.crear(dataToSend);
       setShowModal(false);
-      setFormData({ numeroPlanilla: '', transportistaId: '', zonaNombre: '', prioridad: 'NORMAL' });
+      setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', prioridad: 'NORMAL' });
       setZonaSugerencias([]);
       setMostrarSugerenciasZona(false);
+      setTransportistaSugerencias([]);
+      setMostrarSugerenciasTransportista(false);
       cargarPedidos();
-      // Recargar zonas por si se creó una nueva
+      // Recargar zonas y vueltas por si se crearon nuevas
       cargarZonas();
+      cargarVueltas();
     } catch (error) {
       alert(error.response?.data || 'Error al crear pedido');
     }
@@ -482,16 +642,19 @@ const AdminPanel = () => {
   const handleCrearTransportista = async (e) => {
     e.preventDefault();
     try {
-      await transportistaService.crear(
-        transportistaForm.codigoInterno,
-        transportistaForm.chofer,
-        transportistaForm.vehiculo
-      );
+      if (transportistaEditando) {
+        await transportistaService.actualizar(transportistaEditando.id, transportistaForm.nombre, null);
+        alert('Transporte actualizado exitosamente');
+      } else {
+        await transportistaService.crear(transportistaForm.nombre);
+        alert('Transporte creado exitosamente');
+      }
       setShowTransportistaModal(false);
-      setTransportistaForm({ codigoInterno: '', chofer: '', vehiculo: '' });
+      setTransportistaForm({ nombre: '' });
+      setTransportistaEditando(null);
       cargarTransportistas();
     } catch (error) {
-      alert(error.response?.data || 'Error al crear transportista');
+      alert(error.response?.data || 'Error al guardar transporte');
     }
   };
 
@@ -520,6 +683,34 @@ const AdminPanel = () => {
       alert('Zona actualizada exitosamente');
     } catch (error) {
       alert(error.response?.data || 'Error al actualizar zona');
+    }
+  };
+
+  const handleCrearVuelta = async (e) => {
+    e.preventDefault();
+    try {
+      await vueltaService.crearObtener(vueltaForm.nombre.trim());
+      setShowVueltaModal(false);
+      setVueltaForm({ nombre: '' });
+      setVueltaEditando(null);
+      cargarVueltas();
+      alert('Vuelta creada exitosamente');
+    } catch (error) {
+      alert(error.response?.data || 'Error al crear vuelta');
+    }
+  };
+
+  const handleEditarVuelta = async (e) => {
+    e.preventDefault();
+    try {
+      await vueltaService.actualizar(vueltaEditando.id, vueltaForm.nombre.trim(), null);
+      setShowVueltaModal(false);
+      setVueltaForm({ nombre: '' });
+      setVueltaEditando(null);
+      cargarVueltas();
+      alert('Vuelta actualizada exitosamente');
+    } catch (error) {
+      alert(error.response?.data || 'Error al actualizar vuelta');
     }
   };
 
@@ -564,13 +755,40 @@ const AdminPanel = () => {
     return colors[prioridad] || '#666';
   };
 
-  const getEstadoColor = (estado) => {
-    const colors = {
-      PENDIENTE: '#FF9800',
-      EN_PROCESO: '#2196F3',
-      REALIZADO: '#4CAF50',
-    };
-    return colors[estado] || '#666';
+  const getEstadoTexto = (pedido) => {
+    if (pedido.estado === 'REALIZADO') {
+      return 'Finalizado';
+    } else if (pedido.estado === 'EN_PREPARACION') {
+      if (!pedido.etapaPreparacion) {
+        return 'En Preparación'; // Cuando recién pasa a EN_PREPARACION sin etapa
+      } else if (pedido.etapaPreparacion === 'CONTROL') {
+        return 'Controlado';
+      } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
+        return 'Pendiente de Carga';
+      }
+      return 'En Preparación';
+    } else if (pedido.estado === 'PENDIENTE') {
+      return 'Pendiente';
+    }
+    return pedido.estado.replace('_', ' ');
+  };
+
+  const getEstadoColor = (pedido) => {
+    if (pedido.estado === 'REALIZADO') {
+      return '#4CAF50';
+    } else if (pedido.estado === 'EN_PREPARACION') {
+      if (!pedido.etapaPreparacion) {
+        return '#2196F3'; // Azul para "En Preparación" (sin etapa aún)
+      } else if (pedido.etapaPreparacion === 'CONTROL') {
+        return '#2196F3'; // Azul para Control
+      } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
+        return '#FF9800'; // Naranja para Pendiente de Carga
+      }
+      return '#2196F3';
+    } else if (pedido.estado === 'PENDIENTE') {
+      return '#9E9E9E'; // Gris para Pendiente (diferente de Pendiente de Carga)
+    }
+    return '#666';
   };
 
   // Calcular cantidad de nuevos pedidos realizados (no vistos)
@@ -600,6 +818,18 @@ const AdminPanel = () => {
 
     pedidos.forEach(pedido => {
       if (pedido.estado === 'REALIZADO' && pedido.fechaActualizacion) {
+        // Aplicar filtro de búsqueda si existe
+        if (textoBusqueda.trim()) {
+          const busqueda = textoBusqueda.toLowerCase().trim();
+          const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+          const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+          const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+          const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+          if (!matchPlanilla && !matchTransporte && !matchZona && !matchVuelta) {
+            return; // Saltar este pedido si no coincide con la búsqueda
+          }
+        }
+        
         const fechaPedido = new Date(pedido.fechaActualizacion);
         fechaPedido.setHours(0, 0, 0, 0);
         
@@ -648,18 +878,29 @@ const AdminPanel = () => {
   };
 
   // Usar useMemo para estabilizar pedidosAgrupadosPorDia
-  const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [activeTab, pedidos]);
+  const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [activeTab, pedidos, textoBusqueda]);
   const pedidosPorDia = useMemo(() => getPedidosPorDia(), [activeTab, pedidos]);
 
   // Limpiar días expandidos cuando se cambia de pestaña (todos los días cerrados por defecto)
+  // O expandir automáticamente cuando hay búsqueda activa
   useEffect(() => {
-    if (activeTab !== 'realizados') {
+    if (activeTab === 'realizados' && pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0) {
+      if (textoBusqueda.trim()) {
+        // Si hay búsqueda activa, expandir todos los días que tienen resultados
+        setDiasExpandidos(new Set(pedidosAgrupadosPorDia.map(dia => dia.fecha)));
+      } else {
+        // Si no hay búsqueda, mantener el comportamiento original
+        // (no expandir automáticamente, solo si el usuario lo hace manualmente)
+      }
+    } else if (activeTab !== 'realizados') {
       // Limpiar días expandidos cuando se cambia de pestaña
       setDiasExpandidos(new Set());
       // Resetear el flag cuando se cambia de pestaña
       hoyColapsadoManualmente.current = false;
+      // Limpiar búsqueda al cambiar de pestaña
+      setTextoBusqueda('');
     }
-  }, [activeTab]);
+  }, [activeTab, pedidosAgrupadosPorDia, textoBusqueda]);
 
   const toggleDia = (fecha) => {
     setDiasExpandidos(prev => {
@@ -714,7 +955,7 @@ const AdminPanel = () => {
               marginRight: '12px',
               verticalAlign: 'middle',
               display: 'inline-block'
-            }} 
+            }}
           />
           Panel de Administración
         </h1>
@@ -798,13 +1039,19 @@ const AdminPanel = () => {
           className={activeTab === 'transportistas' ? 'active' : ''}
           onClick={() => setActiveTab('transportistas')}
         >
-          Transportistas
+          Transportes
         </button>
         <button
           className={activeTab === 'zonas' ? 'active' : ''}
           onClick={() => setActiveTab('zonas')}
         >
           Zonas
+        </button>
+        <button
+          className={activeTab === 'vueltas' ? 'active' : ''}
+          onClick={() => setActiveTab('vueltas')}
+        >
+          Vueltas
         </button>
         <button
           className={activeTab === 'usuarios' ? 'active' : ''}
@@ -822,7 +1069,122 @@ const AdminPanel = () => {
 
       {activeTab === 'pedidos' && (
         <div className="content-section">
-          <div className="section-header" style={{ justifyContent: 'flex-end' }}>
+          {/* Buscador avanzado y filtros para Pedidos */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '15px',
+            padding: '20px 40px',
+            margin: '0 20px 25px 20px',
+            background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+            border: '1px solid #e2e8f0',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
+          }}>
+            {/* Botones de filtro */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              flexWrap: 'wrap'
+            }}>
+              {['TODOS', 'PENDIENTE', 'EN_PREPARACION', 'CONTROLADO', 'PENDIENTE_CARGA'].map((filtro) => (
+                <button
+                  key={filtro}
+                  onClick={() => setFiltroPedidos(filtro)}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: filtroPedidos === filtro ? '#2196F3' : '#f3f4f6',
+                    color: filtroPedidos === filtro ? 'white' : '#666',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: filtroPedidos === filtro ? '600' : '500',
+                    transition: 'all 0.2s',
+                    boxShadow: filtroPedidos === filtro ? '0 2px 4px rgba(33, 150, 243, 0.3)' : 'none',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (filtroPedidos !== filtro) {
+                      e.target.style.backgroundColor = '#e5e7eb';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (filtroPedidos !== filtro) {
+                      e.target.style.backgroundColor = '#f3f4f6';
+                    }
+                  }}
+                >
+                  {filtro === 'TODOS' ? 'Todos' :
+                   filtro === 'PENDIENTE' ? 'Pendientes' :
+                   filtro === 'EN_PREPARACION' ? 'En Preparación' :
+                   filtro === 'CONTROLADO' ? 'Controlados' :
+                   'Pendiente de Carga'}
+                </button>
+              ))}
+            </div>
+            {/* Buscador y botón Nuevo Pedido */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '20px'
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                flex: '0 0 400px',
+                position: 'relative'
+              }}>
+                <span style={{ fontSize: '1.2rem' }}>🔍</span>
+                <input
+                  type="text"
+                  placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                  value={textoBusqueda}
+                  onChange={(e) => setTextoBusqueda(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '10px 15px',
+                    border: '2px solid #e0e0e0',
+                    borderRadius: '8px',
+                    fontSize: '0.95rem',
+                    outline: 'none',
+                    transition: 'all 0.2s',
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = '#2196F3';
+                    e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = '#e0e0e0';
+                    e.target.style.boxShadow = 'none';
+                  }}
+                />
+                {textoBusqueda && (
+                  <button
+                    onClick={() => setTextoBusqueda('')}
+                    style={{
+                      padding: '8px 12px',
+                      border: 'none',
+                      borderRadius: '6px',
+                      backgroundColor: '#f3f4f6',
+                      color: '#666',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#e5e7eb';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#f3f4f6';
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
             <button
               onClick={() => setShowModal(true)}
               style={{
@@ -830,23 +1192,98 @@ const AdminPanel = () => {
                 backgroundColor: '#2196F3',
                 color: 'white',
                 border: 'none',
-                borderRadius: '5px',
+                  borderRadius: '8px',
                 cursor: 'pointer',
                 fontSize: '14px',
-                fontWeight: 'bold',
+                  fontWeight: '600',
                 boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-              }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#1976D2';
+                  e.target.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#2196F3';
+                  e.target.style.transform = 'translateY(0)';
+                }}
             >
               + Nuevo Pedido
             </button>
+            </div>
           </div>
           <div className="pedidos-grid">
-            {pedidos.filter(pedido => pedido.estado !== 'REALIZADO').map((pedido) => (
+            {pedidos.filter(pedido => {
+              if (pedido.estado === 'REALIZADO') return false;
+              
+              // Aplicar filtro de estado
+              if (filtroPedidos !== 'TODOS') {
+                if (filtroPedidos === 'PENDIENTE' && pedido.estado !== 'PENDIENTE') {
+                  return false;
+                } else if (filtroPedidos === 'EN_PREPARACION') {
+                  if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion) {
+                    return false;
+                  }
+                } else if (filtroPedidos === 'CONTROLADO') {
+                  if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion !== 'CONTROL') {
+                    return false;
+                  }
+                } else if (filtroPedidos === 'PENDIENTE_CARGA') {
+                  if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion !== 'PENDIENTE_CARGA') {
+                    return false;
+                  }
+                }
+              }
+              
+              // Aplicar filtro de búsqueda si existe
+              if (textoBusqueda.trim()) {
+                const busqueda = textoBusqueda.toLowerCase().trim();
+                const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+              }
+              return true;
+            }).map((pedido) => (
               <div key={pedido.id} className="pedido-card admin-pedido-card">
                 <div className="pedido-header">
-                  <h3>Planilla: {pedido.numeroPlanilla}</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '1.5rem',
+                      color: 'white',
+                      fontWeight: '700',
+                      boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
+                    }}>
+                      📦
+                    </div>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
+                        Planilla #{pedido.numeroPlanilla}
+                      </h3>
+                      <div style={{ 
+                        fontSize: '0.85rem', 
+                        color: '#64748b', 
+                        marginTop: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}</span>
+                      </div>
+                    </div>
+                  </div>
                   <span
                     className="prioridad-badge"
                     style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
@@ -854,55 +1291,90 @@ const AdminPanel = () => {
                     {pedido.prioridad}
                   </span>
                 </div>
+                
                 <div className="pedido-info">
-                  <div style={{ marginBottom: '10px' }}>
-                    <strong style={{ display: 'block', marginBottom: '5px', color: '#333' }}>Transportista:</strong>
-                    {pedido.transportistaChofer && pedido.transportistaVehiculo ? (
-                      <div style={{ marginLeft: '0', color: '#666' }}>
-                        {pedido.transportistaCodigoInterno && (
-                          <span style={{ color: '#999', fontSize: '0.9em' }}>
-                            {pedido.transportistaCodigoInterno} -{' '}
-                          </span>
-                        )}
-                        {pedido.transportistaChofer} - {pedido.transportistaVehiculo}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div className="info-item">
+                      <div className="info-label">🚚 Transporte</div>
+                      <div className="info-value">
+                        {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
                       </div>
-                    ) : (
-                      <div style={{ marginLeft: '0', color: '#666' }}>
-                        {pedido.transportista || 'Sin transportista'}
+                    </div>
+                    {pedido.cantidad && (
+                      <div className="info-item">
+                        <div className="info-label">📊 Cantidad</div>
+                        <div className="info-value">{pedido.cantidad}</div>
                       </div>
                     )}
+                      </div>
+                  
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    {pedido.zonaNombre && (
+                      <div className="info-item">
+                        <div className="info-label">📍 Zona</div>
+                        <div className="info-value">{pedido.zonaNombre}</div>
+                      </div>
+                    )}
+                    {pedido.vueltaNombre && (
+                      <div className="info-item">
+                        <div className="info-label">🔄 Vuelta</div>
+                        <div className="info-value">{pedido.vueltaNombre}</div>
                   </div>
-                  {pedido.zonaNombre && (
-                    <p>
-                      <strong>Zona:</strong> {pedido.zonaNombre}
-                    </p>
-                  )}
-                  <p>
-                    <strong>Estado:</strong>{' '}
+                    )}
+                  </div>
+                  
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div className="info-item">
+                      <div className="info-label">👥 Equipo</div>
+                      <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
+                    </div>
+                    <div className="info-item">
+                      <div className="info-label">📋 Estado</div>
                     <span
                       className="estado-badge"
-                      style={{ backgroundColor: getEstadoColor(pedido.estado) }}
+                      style={{ backgroundColor: getEstadoColor(pedido) }}
                     >
-                      {pedido.estado.replace('_', ' ')}
+                      {getEstadoTexto(pedido)}
                     </span>
-                  </p>
-                  <p>
-                    <strong>Equipo Asignado:</strong> {pedido.grupoNombre || 'Sin asignar'}
-                  </p>
-                  <p>
-                    <strong>Hora de Carga:</strong>{' '}
-                    <span style={{ color: '#666' }}>
-                      {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })}
-                    </span>
-                  </p>
+                    </div>
+                  </div>
+                  
                   {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
-                    <p>
-                      <strong>Finalización:</strong>{' '}
-                      <span style={{ color: '#4CAF50', fontWeight: '600' }}>
+                    <div style={{
+                      padding: '12px',
+                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                      borderRadius: '8px',
+                      border: '1px solid #86efac',
+                      marginTop: '8px'
+                    }}>
+                      <div style={{ 
+                        fontSize: '0.85rem', 
+                        fontWeight: '600', 
+                        color: '#166534',
+                        marginBottom: '4px'
+                      }}>
+                        ✅ Finalizado
+                      </div>
+                      <div style={{ 
+                        fontSize: '0.9rem', 
+                        color: '#15803d',
+                        fontWeight: '500'
+                      }}>
                         {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                           year: 'numeric',
                           month: '2-digit',
@@ -911,17 +1383,18 @@ const AdminPanel = () => {
                           minute: '2-digit',
                           hour12: false,
                         })}
-                      </span>
-                    </p>
+                      </div>
+                    </div>
                   )}
                 </div>
+                
                 {pedido.estado === 'PENDIENTE' && (
                   <div className="pedido-actions">
                     <button
                       className="btn-danger"
                       onClick={() => handleEliminarPedido(pedido.id)}
                     >
-                      Eliminar
+                      🗑️ Eliminar
                     </button>
                   </div>
                 )}
@@ -968,6 +1441,91 @@ const AdminPanel = () => {
 
       {activeTab === 'realizados' && (
         <div className="content-section">
+          {/* Buscador avanzado para Realizados */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '20px',
+            padding: '20px 40px',
+            margin: '0 20px 25px 20px',
+            background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+            border: '1px solid #e2e8f0',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }}>
+              <span style={{ fontSize: '1.8rem' }}>✅</span>
+              <h2 style={{
+                margin: 0,
+                fontSize: '1.5rem',
+                fontWeight: '700',
+                color: '#1e293b',
+                letterSpacing: '-0.02em'
+              }}>
+                Planillas Realizadas
+              </h2>
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flex: '0 0 400px',
+              position: 'relative'
+            }}>
+              <span style={{ fontSize: '1.2rem' }}>🔍</span>
+              <input
+                type="text"
+                placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                value={textoBusqueda}
+                onChange={(e) => setTextoBusqueda(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: '10px 15px',
+                  border: '2px solid #e0e0e0',
+                  borderRadius: '8px',
+                  fontSize: '0.95rem',
+                  outline: 'none',
+                  transition: 'all 0.2s',
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = '#2196F3';
+                  e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = '#e0e0e0';
+                  e.target.style.boxShadow = 'none';
+                }}
+              />
+              {textoBusqueda && (
+                <button
+                  onClick={() => setTextoBusqueda('')}
+                  style={{
+                    padding: '8px 12px',
+                    border: 'none',
+                    borderRadius: '6px',
+                    backgroundColor: '#f3f4f6',
+                    color: '#666',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = '#e5e7eb';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = '#f3f4f6';
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
           {pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               {pedidosAgrupadosPorDia.map((dia) => (
@@ -1074,10 +1632,57 @@ const AdminPanel = () => {
                   {/* Pedidos del día - solo se muestran si está expandido */}
                   {diasExpandidos.has(dia.fecha) && (
                     <div className="pedidos-grid" style={{ padding: '20px', gap: '15px' }}>
-                      {dia.pedidos.map((pedido) => (
+                      {dia.pedidos.filter(pedido => {
+                        // Aplicar filtro de búsqueda si existe (aunque ya está filtrado en getPedidosAgrupadosPorDia, 
+                        // lo aplicamos aquí también para asegurar consistencia)
+                        if (textoBusqueda.trim()) {
+                          const busqueda = textoBusqueda.toLowerCase().trim();
+                          const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                          const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                          const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                          const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                          return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+                        }
+                        return true;
+                      }).map((pedido) => (
                         <div key={pedido.id} className="pedido-card admin-pedido-card">
                           <div className="pedido-header">
-                            <h3>Planilla: {pedido.numeroPlanilla}</h3>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{
+                                width: '48px',
+                                height: '48px',
+                                borderRadius: '12px',
+                                background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '1.5rem',
+                                color: 'white',
+                                fontWeight: '700',
+                                boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
+                              }}>
+                                📦
+                              </div>
+                              <div>
+                                <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
+                                  Planilla #{pedido.numeroPlanilla}
+                                </h3>
+                                <div style={{ 
+                                  fontSize: '0.85rem', 
+                                  color: '#64748b', 
+                                  marginTop: '4px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px'
+                                }}>
+                                  <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: false,
+                                  })}</span>
+                                </div>
+                              </div>
+                            </div>
                             <span
                               className="prioridad-badge"
                               style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
@@ -1085,46 +1690,90 @@ const AdminPanel = () => {
                               {pedido.prioridad}
                             </span>
                           </div>
+                          
                           <div className="pedido-info">
-                            <div style={{ marginBottom: '10px' }}>
-                              <strong style={{ display: 'block', marginBottom: '5px', color: '#333' }}>Transportista:</strong>
-                              {pedido.transportistaChofer && pedido.transportistaVehiculo ? (
-                                <div style={{ marginLeft: '0', color: '#666' }}>
-                                  {pedido.transportistaCodigoInterno && (
-                                    <span style={{ color: '#999', fontSize: '0.9em' }}>
-                                      {pedido.transportistaCodigoInterno} -{' '}
-                                    </span>
-                                  )}
-                                  {pedido.transportistaChofer} - {pedido.transportistaVehiculo}
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr',
+                              gap: '16px',
+                              marginBottom: '16px'
+                            }}>
+                              <div className="info-item">
+                                <div className="info-label">🚚 Transporte</div>
+                                <div className="info-value">
+                                  {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
                                 </div>
-                              ) : (
-                                <div style={{ marginLeft: '0', color: '#666' }}>
-                                  {pedido.transportista || 'Sin transportista'}
+                              </div>
+                              {pedido.cantidad && (
+                                <div className="info-item">
+                                  <div className="info-label">📊 Cantidad</div>
+                                  <div className="info-value">{pedido.cantidad}</div>
                                 </div>
                               )}
+                                </div>
+                            
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr',
+                              gap: '16px',
+                              marginBottom: '16px'
+                            }}>
+                              {pedido.zonaNombre && (
+                                <div className="info-item">
+                                  <div className="info-label">📍 Zona</div>
+                                  <div className="info-value">{pedido.zonaNombre}</div>
+                                </div>
+                              )}
+                              {pedido.vueltaNombre && (
+                                <div className="info-item">
+                                  <div className="info-label">🔄 Vuelta</div>
+                                  <div className="info-value">{pedido.vueltaNombre}</div>
                             </div>
-                            {pedido.zonaNombre && (
-                              <p>
-                                <strong>Zona:</strong> {pedido.zonaNombre}
-                              </p>
-                            )}
-                            <p>
-                              <strong>Equipo Asignado:</strong> {pedido.grupoNombre || 'Sin asignar'}
-                            </p>
-                            <p>
-                              <strong>Hora de Carga:</strong>{' '}
-                              <span style={{ color: '#666' }}>
-                                {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: false,
-                                })}
+                              )}
+                            </div>
+                            
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr',
+                              gap: '16px',
+                              marginBottom: '16px'
+                            }}>
+                              <div className="info-item">
+                                <div className="info-label">👥 Equipo</div>
+                                <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
+                              </div>
+                              <div className="info-item">
+                                <div className="info-label">📋 Estado</div>
+                                <span
+                                  className="estado-badge"
+                                  style={{ backgroundColor: getEstadoColor(pedido) }}
+                                >
+                                  {getEstadoTexto(pedido)}
                               </span>
-                            </p>
+                              </div>
+                            </div>
+                            
                             {pedido.fechaActualizacion && (
-                              <p>
-                                <strong>Finalización:</strong>{' '}
-                                <span style={{ color: '#4CAF50', fontWeight: '600' }}>
+                              <div style={{
+                                padding: '12px',
+                                background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                borderRadius: '8px',
+                                border: '1px solid #86efac',
+                                marginTop: '8px'
+                              }}>
+                                <div style={{ 
+                                  fontSize: '0.85rem', 
+                                  fontWeight: '600', 
+                                  color: '#166534',
+                                  marginBottom: '4px'
+                                }}>
+                                  ✅ Finalizado
+                                </div>
+                                <div style={{ 
+                                  fontSize: '0.9rem', 
+                                  color: '#15803d',
+                                  fontWeight: '500'
+                                }}>
                                   {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                                     year: 'numeric',
                                     month: '2-digit',
@@ -1133,11 +1782,10 @@ const AdminPanel = () => {
                                     minute: '2-digit',
                                     hour12: false,
                                   })}
-                                </span>
-                              </p>
+                                </div>
+                              </div>
                             )}
                           </div>
-                          {/* No mostrar botón de eliminar en pedidos realizados */}
                         </div>
                       ))}
                     </div>
@@ -1189,7 +1837,7 @@ const AdminPanel = () => {
         <div className="content-section">
           <div className="table-container">
             <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
-              <h2 style={{ margin: 0, color: '#333' }}>Transportistas</h2>
+              <h2 style={{ margin: 0, color: '#333' }}>Transportes</h2>
               <button
                 onClick={() => setShowTransportistaModal(true)}
                 style={{
@@ -1212,9 +1860,7 @@ const AdminPanel = () => {
             <table>
               <thead>
                 <tr>
-                  <th>Código Interno</th>
-                  <th>Chofer</th>
-                  <th>Vehículo</th>
+                  <th>Transporte</th>
                   <th>Estado</th>
                   <th>Acciones</th>
                 </tr>
@@ -1222,9 +1868,7 @@ const AdminPanel = () => {
               <tbody>
                 {transportistas.map((transportista) => (
                   <tr key={transportista.id}>
-                    <td>{transportista.codigoInterno}</td>
-                    <td>{transportista.chofer}</td>
-                    <td>{transportista.vehiculo}</td>
+                    <td>{transportista.nombre}</td>
                     <td>
                       <span style={{
                         padding: '4px 12px',
@@ -1238,17 +1882,28 @@ const AdminPanel = () => {
                       </span>
                     </td>
                     <td>
+                      <button
+                        className="btn-secondary"
+                        style={{ marginRight: '8px', backgroundColor: '#4CAF50', color: 'white' }}
+                        onClick={() => {
+                          setTransportistaEditando(transportista);
+                          setTransportistaForm({ nombre: transportista.nombre });
+                          setShowTransportistaModal(true);
+                        }}
+                      >
+                        Editar
+                      </button>
                       {transportista.activo ? (
                         <button
                           className="btn-danger"
                           onClick={async () => {
-                            if (window.confirm('¿Estás seguro de que deseas desactivar este transportista?\n\nEl transportista se desactivará y no aparecerá como opción al crear pedidos, pero se mantendrá en el sistema para conservar los registros históricos.')) {
+                            if (window.confirm('¿Estás seguro de que deseas desactivar este transporte?\n\nEl transporte se desactivará y no aparecerá como opción al crear pedidos, pero se mantendrá en el sistema para conservar los registros históricos.')) {
                               try {
-                                await transportistaService.actualizar(transportista.id, null, null, null, false);
+                                await transportistaService.actualizar(transportista.id, null, false);
                                 cargarTransportistas();
-                                alert('Transportista desactivado exitosamente');
+                                alert('Transporte desactivado exitosamente');
                               } catch (error) {
-                                alert(error.response?.data || 'Error al desactivar transportista');
+                                alert(error.response?.data || 'Error al desactivar transporte');
                               }
                             }
                           }}
@@ -1260,13 +1915,13 @@ const AdminPanel = () => {
                           className="btn-secondary"
                           style={{ backgroundColor: '#667eea', color: 'white' }}
                           onClick={async () => {
-                            if (window.confirm('¿Estás seguro de que deseas activar este transportista?\n\nEl transportista volverá a aparecer como opción al crear pedidos.')) {
+                            if (window.confirm('¿Estás seguro de que deseas activar este transporte?\n\nEl transporte volverá a aparecer como opción al crear pedidos.')) {
                               try {
-                                await transportistaService.actualizar(transportista.id, null, null, null, true);
+                                await transportistaService.actualizar(transportista.id, null, true);
                                 cargarTransportistas();
-                                alert('Transportista activado exitosamente');
+                                alert('Transporte activado exitosamente');
                               } catch (error) {
-                                alert(error.response?.data || 'Error al activar transportista');
+                                alert(error.response?.data || 'Error al activar transporte');
                               }
                             }
                           }}
@@ -1589,18 +2244,216 @@ const AdminPanel = () => {
         </div>
       )}
 
+      {activeTab === 'vueltas' && (
+        <div className="content-section">
+          <div className="table-container">
+            <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
+              <h2 style={{ margin: 0, color: '#333' }}>Vueltas</h2>
+              <button
+                onClick={() => {
+                  setVueltaForm({ nombre: '' });
+                  setVueltaEditando(null);
+                  setShowVueltaModal(true);
+                }}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+              >
+                + Nueva Vuelta
+              </button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vueltas.length === 0 ? (
+                  <tr>
+                    <td colSpan="3" style={{ textAlign: 'center', padding: '20px' }}>
+                      No hay vueltas registradas
+                    </td>
+                  </tr>
+                ) : (
+                  vueltas.map((vuelta) => (
+                    <tr key={vuelta.id}>
+                      <td>{vuelta.nombre}</td>
+                      <td>
+                        <span style={{
+                          padding: '4px 12px',
+                          borderRadius: '12px',
+                          fontSize: '0.85em',
+                          fontWeight: 'bold',
+                          backgroundColor: vuelta.activo ? '#E8F5E9' : '#FFEBEE',
+                          color: vuelta.activo ? '#2E7D32' : '#C62828'
+                        }}>
+                          {vuelta.activo ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <button
+                            className="btn-secondary"
+                            style={{ 
+                              backgroundColor: '#2196F3', 
+                              color: 'white',
+                              padding: '6px 12px',
+                              fontSize: '13px',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontWeight: 'bold'
+                            }}
+                            onClick={() => {
+                              setVueltaEditando(vuelta);
+                              setVueltaForm({ nombre: vuelta.nombre });
+                              setShowVueltaModal(true);
+                            }}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+                          >
+                            Editar
+                          </button>
+                          {vuelta.activo ? (
+                            <button
+                              className="btn-danger"
+                              onClick={async () => {
+                                if (window.confirm('¿Estás seguro de que deseas desactivar esta vuelta?\n\nLa vuelta se desactivará y no aparecerá como opción al crear pedidos, pero se mantendrá en el sistema para conservar los registros históricos.')) {
+                                  try {
+                                    await vueltaService.actualizar(vuelta.id, null, false);
+                                    cargarVueltas();
+                                    alert('Vuelta desactivada exitosamente');
+                                  } catch (error) {
+                                    alert(error.response?.data || 'Error al desactivar vuelta');
+                                  }
+                                }
+                              }}
+                            >
+                              Desactivar
+                            </button>
+                          ) : (
+                            <button
+                              className="btn-secondary"
+                              style={{ backgroundColor: '#667eea', color: 'white' }}
+                              onClick={async () => {
+                                if (window.confirm('¿Estás seguro de que deseas activar esta vuelta?\n\nLa vuelta volverá a aparecer como opción al crear pedidos.')) {
+                                  try {
+                                    await vueltaService.actualizar(vuelta.id, null, true);
+                                    cargarVueltas();
+                                    alert('Vuelta activada exitosamente');
+                                  } catch (error) {
+                                    alert(error.response?.data || 'Error al activar vuelta');
+                                  }
+                                }
+                              }}
+                            >
+                              Activar
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {showModal && (
         <div className="modal-overlay" onClick={() => {
           setShowModal(false);
-          setFormData({ numeroPlanilla: '', transportistaId: '', zonaNombre: '', prioridad: 'NORMAL' });
+          setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', prioridad: 'NORMAL' });
           setZonaSugerencias([]);
           setMostrarSugerenciasZona(false);
+          setTransportistaSugerencias([]);
+          setMostrarSugerenciasTransportista(false);
         }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Nuevo Pedido</h3>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ 
+            maxWidth: '700px', 
+            maxHeight: '90vh', 
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)'
+          }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
+              color: 'white',
+              padding: '24px 30px',
+              borderRadius: '10px 10px 0 0',
+              margin: '-30px -30px 25px -30px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                background: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '20px'
+              }}>
+                📦
+              </div>
+              <h3 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '600', flex: 1 }}>Nuevo Pedido</h3>
+            </div>
+            <div style={{ 
+              overflowY: 'auto', 
+              overflowX: 'hidden',
+              flex: 1,
+              paddingRight: '10px',
+              marginRight: '-10px'
+            }}>
             <form onSubmit={handleCrearPedido}>
-              <div className="form-group">
-                <label>Número de Planilla</label>
+              {/* Sección: Información Básica */}
+              <div style={{
+                marginBottom: '24px',
+                paddingBottom: '20px',
+                borderBottom: '2px solid #f0f0f0'
+              }}>
+                <div style={{
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  color: '#666',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span style={{ width: '3px', height: '16px', background: '#2563eb', borderRadius: '2px' }}></span>
+                  Información Básica
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ 
+                      display: 'block',
+                      marginBottom: '8px',
+                      color: '#333',
+                      fontWeight: '600',
+                      fontSize: '0.95rem'
+                    }}>
+                      Número de Planilla <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
                 <input
                   ref={numeroPlanillaRef}
                   type="text"
@@ -1608,28 +2461,175 @@ const AdminPanel = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, numeroPlanilla: e.target.value })
                   }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          cantidadRef.current?.focus();
+                        }
+                      }}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        border: '2px solid #e5e7eb',
+                        borderRadius: '8px',
+                        fontSize: '1rem',
+                        boxSizing: 'border-box',
+                        transition: 'all 0.2s',
+                        background: '#fff'
+                      }}
+                      onFocus={(e) => {
+                        e.target.style.borderColor = '#2563eb';
+                        e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.target.style.borderColor = '#e5e7eb';
+                        e.target.style.boxShadow = 'none';
+                      }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ 
+                      display: 'block',
+                      marginBottom: '8px',
+                      color: '#333',
+                      fontWeight: '600',
+                      fontSize: '0.95rem'
+                    }}>
+                      Cantidad <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      ref={cantidadRef}
+                      type="number"
+                      min="1"
+                      value={formData.cantidad}
+                      onChange={(e) => setFormData({ ...formData, cantidad: e.target.value })}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       transportistaRef.current?.focus();
                     }
                   }}
+                      placeholder="Ej: 10, 25..."
                   required
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        border: '2px solid #e5e7eb',
+                        borderRadius: '8px',
+                        fontSize: '1rem',
+                        boxSizing: 'border-box',
+                        transition: 'all 0.2s',
+                        background: '#fff'
+                      }}
+                      onFocus={(e) => {
+                        e.target.style.borderColor = '#2563eb';
+                        e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.target.style.borderColor = '#e5e7eb';
+                        e.target.style.boxShadow = 'none';
+                      }}
                 />
               </div>
-              <div className="form-group" style={{ position: 'relative' }}>
-                <label>Transportista</label>
-                <select
+                </div>
+              </div>
+              {/* Sección: Información de Envío */}
+              <div style={{
+                marginBottom: '24px',
+                paddingBottom: '20px',
+                borderBottom: '2px solid #f0f0f0'
+              }}>
+                <div style={{
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  color: '#666',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <span style={{ width: '3px', height: '16px', background: '#2563eb', borderRadius: '2px' }}></span>
+                  Información de Envío
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group" style={{ position: 'relative', marginBottom: 0 }}>
+                    <label style={{ 
+                      display: 'block',
+                      marginBottom: '8px',
+                      color: '#333',
+                      fontWeight: '600',
+                      fontSize: '0.95rem'
+                    }}>
+                      Transporte <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                  <input
                   ref={transportistaRef}
-                  value={formData.transportistaId || ''}
-                  onChange={(e) =>
-                    setFormData({ ...formData, transportistaId: e.target.value })
-                  }
+                    type="text"
+                    value={formData.transportistaNombre || ''}
+                    onChange={handleTransportistaInputChange}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (mostrarSugerenciasTransportista && transportistaSugerencias.length > 0) {
+                      if (e.key === 'ArrowDown') {
                       e.preventDefault();
-                      zonaRef.current?.focus();
+                        const nuevoIndice = indiceTransportistaSeleccionada < transportistaSugerencias.length - 1 
+                          ? indiceTransportistaSeleccionada + 1 
+                          : 0;
+                        setIndiceTransportistaSeleccionada(nuevoIndice);
+                        setTimeout(() => {
+                          const elemento = document.querySelector(`[data-transportista-index="${nuevoIndice}"]`);
+                          if (elemento && transportistaSugerenciasRef.current) {
+                            elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                          }
+                        }, 0);
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const nuevoIndice = indiceTransportistaSeleccionada > 0 
+                          ? indiceTransportistaSeleccionada - 1 
+                          : transportistaSugerencias.length - 1;
+                        setIndiceTransportistaSeleccionada(nuevoIndice);
+                        setTimeout(() => {
+                          const elemento = document.querySelector(`[data-transportista-index="${nuevoIndice}"]`);
+                          if (elemento && transportistaSugerenciasRef.current) {
+                            elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                          }
+                        }, 0);
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (indiceTransportistaSeleccionada >= 0 && indiceTransportistaSeleccionada < transportistaSugerencias.length) {
+                          seleccionarTransportista(transportistaSugerencias[indiceTransportistaSeleccionada]);
+                        } else if (transportistaSugerencias.length > 0) {
+                          seleccionarTransportista(transportistaSugerencias[0]);
+                        }
+                        zonaRef.current?.focus();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setMostrarSugerenciasTransportista(false);
+                        setIndiceTransportistaSeleccionada(-1);
+                      }
+                    } else if (e.key === 'Enter' && !mostrarSugerenciasTransportista) {
+                      e.preventDefault();
+                      if (formData.transportistaNombre && formData.transportistaNombre.trim() !== '') {
+                        zonaRef.current?.focus();
+                      }
                     }
+                  }}
+                  onFocus={() => {
+                    if (formData.transportistaNombre) {
+                      buscarTransportistas(formData.transportistaNombre);
+                    } else if (transportistas.filter(t => t.activo).length === 0) {
+                      setShowTransportistaTooltip(true);
+                    }
+                    setIndiceTransportistaSeleccionada(-1);
+                  }}
+                  onBlur={() => {
+                    setTimeout(() => {
+                      setMostrarSugerenciasTransportista(false);
+                      setIndiceTransportistaSeleccionada(-1);
+                      setShowTransportistaTooltip(false);
+                    }, 200);
                   }}
                   onMouseEnter={() => {
                     const transportistasActivos = transportistas.filter(t => t.activo);
@@ -1638,25 +2638,68 @@ const AdminPanel = () => {
                     }
                   }}
                   onMouseLeave={() => setShowTransportistaTooltip(false)}
-                  onFocus={() => {
-                    const transportistasActivos = transportistas.filter(t => t.activo);
-                    if (transportistasActivos.length === 0) {
-                      setShowTransportistaTooltip(true);
-                    }
-                  }}
-                  onBlur={() => setShowTransportistaTooltip(false)}
+                    placeholder="Escribir transporte (se guardará automáticamente)"
                   required
-                  style={{ position: 'relative' }}
-                >
-                  <option value="">Seleccionar transportista...</option>
-                  {transportistas
-                    .filter(t => t.activo)
-                    .map((transportista) => (
-                      <option key={transportista.id} value={transportista.id}>
-                        {transportista.codigoInterno} - {transportista.chofer} ({transportista.vehiculo})
-                      </option>
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px',
+                      fontSize: '1rem',
+                      boxSizing: 'border-box',
+                      transition: 'all 0.2s',
+                      background: '#fff'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = '#2563eb';
+                      e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = '#e5e7eb';
+                      e.target.style.boxShadow = 'none';
+                    }}
+                  />
+                {mostrarSugerenciasTransportista && transportistaSugerencias.length > 0 && (
+                  <div 
+                    ref={transportistaSugerenciasRef}
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'white',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                      zIndex: 1000,
+                      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)',
+                      marginTop: '6px'
+                    }}
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    {transportistaSugerencias.map((transportista, index) => (
+                      <div
+                        key={transportista.id}
+                        data-transportista-index={index}
+                        onClick={() => seleccionarTransportista(transportista)}
+                        onMouseEnter={() => setIndiceTransportistaSeleccionada(index)}
+                        style={{
+                          padding: '12px 16px',
+                          cursor: 'pointer',
+                          borderBottom: index === transportistaSugerencias.length - 1 ? 'none' : '1px solid #f3f4f6',
+                          transition: 'all 0.15s ease',
+                          backgroundColor: index === indiceTransportistaSeleccionada ? '#2563eb' : 'white',
+                          color: index === indiceTransportistaSeleccionada ? 'white' : '#333',
+                          fontWeight: index === indiceTransportistaSeleccionada ? '600' : '500',
+                          borderRadius: index === 0 ? '6px 6px 0 0' : index === transportistaSugerencias.length - 1 ? '0 0 6px 6px' : '0'
+                        }}
+                      >
+                        {transportista.nombre}
+                      </div>
                     ))}
-                </select>
+                  </div>
+                )}
                 {showTransportistaTooltip && transportistas.filter(t => t.activo).length === 0 && (
                   <div style={{
                     position: 'absolute',
@@ -1669,16 +2712,16 @@ const AdminPanel = () => {
                     borderRadius: '8px',
                     fontSize: '0.9rem',
                     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                    zIndex: 1000,
+                    zIndex: 1001,
                     maxWidth: '300px',
                     lineHeight: '1.5',
                     animation: 'fadeIn 0.3s ease-in'
                   }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
-                      ℹ️ No hay transportistas registrados
+                      ℹ️ No hay transportes registrados
                     </div>
                     <div>
-                      Para crear un pedido, primero debes ir a la sección <strong>"Transportistas"</strong> y crear al menos un transportista.
+                      Para crear un pedido, primero debes ir a la sección <strong>"Transportistas"</strong> y crear al menos un transporte.
                     </div>
                     <div style={{
                       position: 'absolute',
@@ -1693,122 +2736,213 @@ const AdminPanel = () => {
                   </div>
                 )}
               </div>
-              <div className="form-group" style={{ position: 'relative' }}>
-                <label>Zona</label>
-                <input
-                  ref={zonaRef}
-                  type="text"
-                  value={formData.zonaNombre}
-                  onChange={handleZonaInputChange}
-                  onKeyDown={(e) => {
-                    if (mostrarSugerenciasZona && zonaSugerencias.length > 0) {
-                      if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        const nuevoIndice = indiceZonaSeleccionada < zonaSugerencias.length - 1 
-                          ? indiceZonaSeleccionada + 1 
-                          : 0;
-                        setIndiceZonaSeleccionada(nuevoIndice);
-                        // Scroll automático para mantener visible la opción seleccionada
-                        setTimeout(() => {
-                          const elemento = document.querySelector(`[data-zona-index="${nuevoIndice}"]`);
-                          if (elemento && zonaSugerenciasRef.current) {
-                            elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                  <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
+                    <label style={{ 
+                      display: 'block',
+                      marginBottom: '8px',
+                      color: '#333',
+                      fontWeight: '600',
+                      fontSize: '0.95rem'
+                    }}>
+                      Zona
+                    </label>
+                    <input
+                      ref={zonaRef}
+                      type="text"
+                      value={formData.zonaNombre}
+                      onChange={handleZonaInputChange}
+                    onKeyDown={(e) => {
+                      if (mostrarSugerenciasZona && zonaSugerencias.length > 0) {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          const nuevoIndice = indiceZonaSeleccionada < zonaSugerencias.length - 1 
+                            ? indiceZonaSeleccionada + 1 
+                            : 0;
+                          setIndiceZonaSeleccionada(nuevoIndice);
+                          // Scroll automático para mantener visible la opción seleccionada
+                          setTimeout(() => {
+                            const elemento = document.querySelector(`[data-zona-index="${nuevoIndice}"]`);
+                            if (elemento && zonaSugerenciasRef.current) {
+                              elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                            }
+                          }, 0);
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          const nuevoIndice = indiceZonaSeleccionada > 0 
+                            ? indiceZonaSeleccionada - 1 
+                            : zonaSugerencias.length - 1;
+                          setIndiceZonaSeleccionada(nuevoIndice);
+                          // Scroll automático para mantener visible la opción seleccionada
+                          setTimeout(() => {
+                            const elemento = document.querySelector(`[data-zona-index="${nuevoIndice}"]`);
+                            if (elemento && zonaSugerenciasRef.current) {
+                              elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                            }
+                          }, 0);
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (indiceZonaSeleccionada >= 0 && indiceZonaSeleccionada < zonaSugerencias.length) {
+                            seleccionarZona(zonaSugerencias[indiceZonaSeleccionada].nombre);
+                          } else if (zonaSugerencias.length > 0) {
+                            seleccionarZona(zonaSugerencias[0].nombre);
                           }
-                        }, 0);
-                      } else if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        const nuevoIndice = indiceZonaSeleccionada > 0 
-                          ? indiceZonaSeleccionada - 1 
-                          : zonaSugerencias.length - 1;
-                        setIndiceZonaSeleccionada(nuevoIndice);
-                        // Scroll automático para mantener visible la opción seleccionada
-                        setTimeout(() => {
-                          const elemento = document.querySelector(`[data-zona-index="${nuevoIndice}"]`);
-                          if (elemento && zonaSugerenciasRef.current) {
-                            elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                          }
-                        }, 0);
-                      } else if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (indiceZonaSeleccionada >= 0 && indiceZonaSeleccionada < zonaSugerencias.length) {
-                          seleccionarZona(zonaSugerencias[indiceZonaSeleccionada].nombre);
-                        } else if (zonaSugerencias.length > 0) {
-                          seleccionarZona(zonaSugerencias[0].nombre);
+                          setTimeout(() => {
+                            vueltaRef.current?.focus();
+                          }, 100);
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setMostrarSugerenciasZona(false);
+                          setIndiceZonaSeleccionada(-1);
                         }
-                        prioridadRef.current?.focus();
-                      } else if (e.key === 'Escape') {
+                      } else if (e.key === 'Enter' && !mostrarSugerenciasZona) {
                         e.preventDefault();
+                        vueltaRef.current?.focus();
+                      }
+                    }}
+                    onFocus={() => {
+                      if (formData.zonaNombre) {
+                        buscarZonas(formData.zonaNombre);
+                      }
+                      setIndiceZonaSeleccionada(-1); // Resetear índice al enfocar
+                    }}
+                    onBlur={() => {
+                      // Delay para permitir click en sugerencias
+                      setTimeout(() => {
                         setMostrarSugerenciasZona(false);
                         setIndiceZonaSeleccionada(-1);
-                      }
-                    } else if (e.key === 'Enter' && !mostrarSugerenciasZona) {
-                      e.preventDefault();
-                      prioridadRef.current?.focus();
-                    }
-                  }}
-                  onFocus={() => {
-                    if (formData.zonaNombre) {
-                      buscarZonas(formData.zonaNombre);
-                    }
-                    setIndiceZonaSeleccionada(-1); // Resetear índice al enfocar
-                  }}
-                  onBlur={() => {
-                    // Delay para permitir click en sugerencias
-                    setTimeout(() => {
-                      setMostrarSugerenciasZona(false);
-                      setIndiceZonaSeleccionada(-1);
-                    }, 200);
-                  }}
-                  placeholder="Escribir zona (se guardará automáticamente)"
-                  style={{ width: '100%', padding: '12px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '1rem', boxSizing: 'border-box' }}
-                />
-                {mostrarSugerenciasZona && zonaSugerencias.length > 0 && (
-                  <div 
-                    ref={zonaSugerenciasRef}
-                    style={{
-                      position: 'absolute',
-                      top: '100%',
-                      left: 0,
-                      right: 0,
-                      backgroundColor: 'white',
-                      border: '1px solid #ddd',
-                      borderRadius: '5px',
-                      maxHeight: '200px',
-                      overflowY: 'auto',
-                      zIndex: 1000,
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-                      marginTop: '4px'
+                      }, 200);
                     }}
-                    onMouseDown={(e) => e.preventDefault()} // Prevenir blur del input al hacer click
-                  >
-                    {zonaSugerencias.map((zona, index) => (
-                      <div
-                        key={zona.id}
-                        data-zona-index={index}
-                        onClick={() => seleccionarZona(zona.nombre)}
-                        onMouseEnter={() => setIndiceZonaSeleccionada(index)}
+                      placeholder="Escribir zona (se guardará automáticamente)"
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        border: '2px solid #e5e7eb',
+                        borderRadius: '8px',
+                        fontSize: '1rem',
+                        boxSizing: 'border-box',
+                        transition: 'all 0.2s',
+                        background: '#fff'
+                      }}
+                      onFocus={(e) => {
+                        e.target.style.borderColor = '#2563eb';
+                        e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.target.style.borderColor = '#e5e7eb';
+                        e.target.style.boxShadow = 'none';
+                      }}
+                    />
+                    {mostrarSugerenciasZona && zonaSugerencias.length > 0 && (
+                      <div 
+                        ref={zonaSugerenciasRef}
                         style={{
-                          padding: '10px 15px',
-                          cursor: 'pointer',
-                          borderBottom: index === zonaSugerencias.length - 1 ? 'none' : '1px solid #eee',
-                          transition: 'background-color 0.15s, color 0.15s',
-                          backgroundColor: index === indiceZonaSeleccionada ? '#2563eb' : 'white',
-                          color: index === indiceZonaSeleccionada ? 'white' : '#333',
-                          fontWeight: index === indiceZonaSeleccionada ? '600' : 'normal',
-                          borderRadius: index === 0 ? '5px 5px 0 0' : index === zonaSugerencias.length - 1 ? '0 0 5px 5px' : '0'
+                          position: 'absolute',
+                          top: '100%',
+                          left: 0,
+                          right: 0,
+                          backgroundColor: 'white',
+                          border: '2px solid #e5e7eb',
+                          borderRadius: '8px',
+                          maxHeight: '200px',
+                          overflowY: 'auto',
+                          zIndex: 1000,
+                          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)',
+                          marginTop: '6px'
                         }}
-                        onMouseLeave={() => {
-                          // No resetear el índice al salir del mouse si hay una selección activa
-                        }}
+                        onMouseDown={(e) => e.preventDefault()}
                       >
-                        {zona.nombre}
+                        {zonaSugerencias.map((zona, index) => (
+                          <div
+                            key={zona.id}
+                            data-zona-index={index}
+                            onClick={() => seleccionarZona(zona.nombre)}
+                            onMouseEnter={() => setIndiceZonaSeleccionada(index)}
+                            style={{
+                              padding: '12px 16px',
+                              cursor: 'pointer',
+                              borderBottom: index === zonaSugerencias.length - 1 ? 'none' : '1px solid #f3f4f6',
+                              transition: 'all 0.15s ease',
+                              backgroundColor: index === indiceZonaSeleccionada ? '#2563eb' : 'white',
+                              color: index === indiceZonaSeleccionada ? 'white' : '#333',
+                              fontWeight: index === indiceZonaSeleccionada ? '600' : '500',
+                              borderRadius: index === 0 ? '6px 6px 0 0' : index === zonaSugerencias.length - 1 ? '0 0 6px 6px' : '0'
+                            }}
+                            onMouseLeave={() => {
+                              // No resetear el índice al salir del mouse si hay una selección activa
+                            }}
+                          >
+                            {zona.nombre}
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </div>
-              <div className="form-group">
-                <label>Prioridad</label>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
+                    <label style={{ 
+                      display: 'block',
+                      marginBottom: '8px',
+                      color: '#333',
+                      fontWeight: '600',
+                      fontSize: '0.95rem'
+                    }}>
+                      Vuelta <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <select
+                      ref={vueltaRef}
+                      value={formData.vueltaNombre || ''}
+                      onChange={(e) => {
+                        const vueltaSeleccionada = vueltas.find(v => v.nombre === e.target.value);
+                        setFormData({ ...formData, vueltaNombre: e.target.value || '' });
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          prioridadRef.current?.focus();
+                        }
+                      }}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        border: '2px solid #e5e7eb',
+                        borderRadius: '8px',
+                        fontSize: '1rem',
+                        boxSizing: 'border-box',
+                        transition: 'all 0.2s',
+                        background: '#fff',
+                        cursor: 'pointer'
+                      }}
+                      onFocus={(e) => {
+                        e.target.style.borderColor = '#2563eb';
+                        e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.target.style.borderColor = '#e5e7eb';
+                        e.target.style.boxShadow = 'none';
+                      }}
+                    >
+                    <option value="">Seleccionar vuelta...</option>
+                    {vueltas
+                      .filter(v => v.activo)
+                      .map((vuelta) => (
+                        <option key={vuelta.id} value={vuelta.nombre}>
+                          {vuelta.nombre}
+                        </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ 
+                      display: 'block',
+                      marginBottom: '8px',
+                      color: '#333',
+                      fontWeight: '600',
+                      fontSize: '0.95rem'
+                    }}>
+                      Prioridad
+                    </label>
                 <select
                   ref={prioridadRef}
                   value={formData.prioridad}
@@ -1816,34 +2950,108 @@ const AdminPanel = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      // Buscar el botón de submit y hacer click
                       const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
                       if (submitButton) {
                         submitButton.click();
                       }
                     }
                   }}
-                >
-                  <option value="BAJA">Baja</option>
-                  <option value="NORMAL">Normal</option>
-                  <option value="ALTA">Alta</option>
-                  <option value="URGENTE">Urgente</option>
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      border: '2px solid #e5e7eb',
+                      borderRadius: '8px',
+                      fontSize: '1rem',
+                      boxSizing: 'border-box',
+                      transition: 'all 0.2s',
+                      background: '#fff',
+                      cursor: 'pointer'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.borderColor = '#2563eb';
+                      e.target.style.boxShadow = '0 0 0 3px rgba(37, 99, 235, 0.1)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.borderColor = '#e5e7eb';
+                      e.target.style.boxShadow = 'none';
+                    }}
+                  >
+                    <option value="BAJA">🟢 Baja</option>
+                    <option value="NORMAL">🟡 Normal</option>
+                    <option value="ALTA">🟠 Alta</option>
+                    <option value="URGENTE">🔴 Urgente</option>
                 </select>
               </div>
-              <div className="modal-actions">
-                <button type="submit" className="btn-primary">
-                  Crear
-                </button>
-                <button type="button" onClick={() => {
-                  setShowModal(false);
-                  setFormData({ numeroPlanilla: '', transportistaId: '', zonaNombre: '', prioridad: 'NORMAL' });
-                  setZonaSugerencias([]);
-                  setMostrarSugerenciasZona(false);
-                }} className="btn-secondary">
+                </div>
+              </div>
+              
+              <div className="modal-actions" style={{
+                flexShrink: 0,
+                marginTop: '28px',
+                paddingTop: '24px',
+                borderTop: '2px solid #f0f0f0',
+                display: 'flex',
+                gap: '12px',
+                justifyContent: 'flex-end'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowModal(false);
+                    setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', prioridad: 'NORMAL' });
+                    setZonaSugerencias([]);
+                    setMostrarSugerenciasZona(false);
+                    setTransportistaSugerencias([]);
+                    setMostrarSugerenciasTransportista(false);
+                  }}
+                  style={{
+                    padding: '12px 24px',
+                    background: '#f3f4f6',
+                    color: '#374151',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.95rem',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = '#e5e7eb';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = '#f3f4f6';
+                  }}
+                >
                   Cancelar
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    padding: '12px 24px',
+                    background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '0.95rem',
+                    transition: 'all 0.2s',
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.transform = 'translateY(-2px)';
+                    e.target.style.boxShadow = '0 6px 16px rgba(37, 99, 235, 0.4)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.transform = 'translateY(0)';
+                    e.target.style.boxShadow = '0 4px 12px rgba(37, 99, 235, 0.3)';
+                  }}
+                >
+                  ✓ Crear Pedido
                 </button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}
@@ -1949,59 +3157,26 @@ const AdminPanel = () => {
       )}
 
       {showTransportistaModal && (
-        <div className="modal-overlay" onClick={() => setShowTransportistaModal(false)}>
+        <div className="modal-overlay" onClick={() => {
+          setShowTransportistaModal(false);
+          setTransportistaForm({ nombre: '' });
+          setTransportistaEditando(null);
+        }}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Nuevo Transportista</h3>
+            <h3>{transportistaEditando ? 'Editar Transporte' : 'Nuevo Transporte'}</h3>
             <form onSubmit={handleCrearTransportista}>
               <div className="form-group">
-                <label>Código Interno</label>
+                <label>Nombre del Transporte</label>
                 <input
                   ref={codigoInternoRef}
                   type="text"
-                  value={transportistaForm.codigoInterno}
+                  value={transportistaForm.nombre}
                   onChange={(e) =>
-                    setTransportistaForm({ ...transportistaForm, codigoInterno: e.target.value })
+                    setTransportistaForm({ ...transportistaForm, nombre: e.target.value })
                   }
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      choferRef.current?.focus();
-                    }
-                  }}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Chofer</label>
-                <input
-                  ref={choferRef}
-                  type="text"
-                  value={transportistaForm.chofer}
-                  onChange={(e) =>
-                    setTransportistaForm({ ...transportistaForm, chofer: e.target.value })
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      vehiculoRef.current?.focus();
-                    }
-                  }}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Vehículo</label>
-                <input
-                  ref={vehiculoRef}
-                  type="text"
-                  value={transportistaForm.vehiculo}
-                  onChange={(e) =>
-                    setTransportistaForm({ ...transportistaForm, vehiculo: e.target.value })
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      // Buscar el botón de submit y hacer click
                       const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
                       if (submitButton) {
                         submitButton.click();
@@ -2013,13 +3188,14 @@ const AdminPanel = () => {
               </div>
               <div className="modal-actions">
                 <button type="submit" className="btn-primary">
-                  Crear
+                  {transportistaEditando ? 'Actualizar' : 'Crear'}
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setShowTransportistaModal(false);
-                    setTransportistaForm({ codigoInterno: '', chofer: '', vehiculo: '' });
+                    setTransportistaForm({ nombre: '' });
+                    setTransportistaEditando(null);
                   }}
                   className="btn-secondary"
                 >
@@ -2082,6 +3258,56 @@ const AdminPanel = () => {
         </div>
       )}
 
+      {showVueltaModal && (
+        <div className="modal-overlay" onClick={() => {
+          setShowVueltaModal(false);
+          setVueltaForm({ nombre: '' });
+          setVueltaEditando(null);
+        }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{vueltaEditando ? 'Editar Vuelta' : 'Nueva Vuelta'}</h3>
+            <form onSubmit={vueltaEditando ? handleEditarVuelta : handleCrearVuelta}>
+              <div className="form-group">
+                <label>Nombre de la Vuelta</label>
+                <input
+                  ref={vueltaNombreRef}
+                  type="text"
+                  value={vueltaForm.nombre}
+                  onChange={(e) => setVueltaForm({ nombre: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
+                      if (submitButton) {
+                        submitButton.click();
+                      }
+                    }
+                  }}
+                  required
+                  placeholder="Ej: Primera vuelta, Segunda vuelta, Sale sábado..."
+                />
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="btn-primary">
+                  {vueltaEditando ? 'Guardar' : 'Crear'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowVueltaModal(false);
+                    setVueltaForm({ nombre: '' });
+                    setVueltaEditando(null);
+                  }}
+                  className="btn-secondary"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Resumen */}
       {showResumenModal && (
         <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
@@ -2095,14 +3321,16 @@ const AdminPanel = () => {
                 <thead>
                   <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Número de Planilla</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transportista</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transporte</th>
                     <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Zona</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Cantidad</th>
+                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Vuelta</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pedidosResumen.length === 0 ? (
                     <tr>
-                      <td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                         No hay planillas para este día
                       </td>
                     </tr>
@@ -2113,23 +3341,16 @@ const AdminPanel = () => {
                           {pedido.numeroPlanilla}
                         </td>
                         <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.transportistaChofer && pedido.transportistaVehiculo ? (
-                            <div>
-                              {pedido.transportistaCodigoInterno && (
-                                <span style={{ color: '#999', fontSize: '0.9em' }}>
-                                  {pedido.transportistaCodigoInterno} -{' '}
-                                </span>
-                              )}
-                              {pedido.transportistaChofer} - {pedido.transportistaVehiculo}
-                            </div>
-                          ) : (
-                            <span style={{ color: '#999', fontStyle: 'italic' }}>
-                              {pedido.transportista || 'Sin transportista'}
-                            </span>
-                          )}
+                          {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
                         </td>
                         <td style={{ padding: '12px', color: '#666' }}>
                           {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
+                          {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
+                          {pedido.vueltaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin vuelta</span>}
                         </td>
                       </tr>
                     ))

@@ -19,11 +19,22 @@ public class TransportistaController {
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<TransportistaDTO> crearTransportista(@RequestBody Map<String, String> body) {
-        String codigoInterno = body.get("codigoInterno");
-        String chofer = body.get("chofer");
-        String vehiculo = body.get("vehiculo");
-        return ResponseEntity.ok(transportistaService.crearTransportista(codigoInterno, chofer, vehiculo));
+    public ResponseEntity<?> crearTransportista(@RequestBody Map<String, String> body) {
+        try {
+            String nombre = body.get("nombre");
+            if (nombre == null || nombre.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body("El nombre es obligatorio");
+            }
+            return ResponseEntity.ok(transportistaService.crearTransportista(nombre));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @GetMapping("/buscar")
+    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    public ResponseEntity<List<TransportistaDTO>> buscarTransportistas(@RequestParam String busqueda) {
+        return ResponseEntity.ok(transportistaService.buscarTransportistas(busqueda));
     }
 
     @GetMapping
@@ -48,11 +59,9 @@ public class TransportistaController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> actualizarTransportista(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         try {
-            String codigoInterno = body.get("codigoInterno") != null ? (String) body.get("codigoInterno") : null;
-            String chofer = body.get("chofer") != null ? (String) body.get("chofer") : null;
-            String vehiculo = body.get("vehiculo") != null ? (String) body.get("vehiculo") : null;
+            String nombre = body.get("nombre") != null ? (String) body.get("nombre") : null;
             Boolean activo = body.get("activo") != null ? (Boolean) body.get("activo") : null;
-            return ResponseEntity.ok(transportistaService.actualizarTransportista(id, codigoInterno, chofer, vehiculo, activo));
+            return ResponseEntity.ok(transportistaService.actualizarTransportista(id, nombre, activo));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }

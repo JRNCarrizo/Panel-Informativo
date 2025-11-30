@@ -14,16 +14,18 @@ public class PedidoDTO {
     private Long id;
     private String numeroPlanilla;
     private Long transportistaId;
-    private String transportistaCodigoInterno;
-    private String transportistaChofer;
-    private String transportistaVehiculo;
-    private String transportista; // Mantener para compatibilidad con frontend
+    private String transportistaNombre;
+    private String transportista; // Mantener para compatibilidad con frontend (usar transportistaNombre)
     private Pedido.Prioridad prioridad;
     private Pedido.EstadoPedido estado;
+    private Pedido.EtapaPreparacion etapaPreparacion;
     private Long grupoId;
     private String grupoNombre;
     private Long zonaId;
     private String zonaNombre;
+    private Integer cantidad;
+    private Long vueltaId;
+    private String vueltaNombre;
     private String usuarioCreadorNombre;
     private LocalDateTime fechaCreacion;
     private LocalDateTime fechaActualizacion;

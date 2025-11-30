@@ -9,19 +9,19 @@ export const transportistaService = {
     return await api.get('/transportistas/activos');
   },
 
-  crear: async (codigoInterno, chofer, vehiculo) => {
+  buscar: async (busqueda) => {
+    return await api.get(`/transportistas/buscar?busqueda=${encodeURIComponent(busqueda)}`);
+  },
+
+  crear: async (nombre) => {
     return await api.post('/transportistas', {
-      codigoInterno,
-      chofer,
-      vehiculo,
+      nombre,
     });
   },
 
-  actualizar: async (id, codigoInterno, chofer, vehiculo, activo) => {
+  actualizar: async (id, nombre, activo) => {
     return await api.put(`/transportistas/${id}`, {
-      codigoInterno,
-      chofer,
-      vehiculo,
+      nombre,
       activo,
     });
   },

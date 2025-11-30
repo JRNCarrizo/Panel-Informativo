@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -16,15 +17,41 @@ public class TransportistaService {
     private final TransportistaRepository transportistaRepository;
 
     @Transactional
-    public TransportistaDTO crearTransportista(String codigoInterno, String chofer, String vehiculo) {
-        if (transportistaRepository.findByCodigoInterno(codigoInterno).isPresent()) {
-            throw new IllegalArgumentException("Ya existe un transportista con ese código interno");
+    public TransportistaDTO crearObtenerTransportista(String nombre) {
+        Transportista transportista = crearObtenerTransportistaEntity(nombre);
+        return convertirADTO(transportista);
+    }
+
+    @Transactional
+    public Transportista crearObtenerTransportistaEntity(String nombre) {
+        // Buscar si existe (case insensitive)
+        Optional<Transportista> transportistaExistente = transportistaRepository.findByNombreIgnoreCase(nombre.trim());
+        
+        if (transportistaExistente.isPresent()) {
+            // Si existe, devolverlo (aunque esté desactivado, lo activamos)
+            Transportista transportista = transportistaExistente.get();
+            if (!transportista.getActivo()) {
+                transportista.setActivo(true);
+                transportista = transportistaRepository.save(transportista);
+            }
+            return transportista;
+        }
+        
+        // Si no existe, crear nuevo
+        Transportista transportista = new Transportista();
+        transportista.setNombre(nombre.trim());
+        transportista.setActivo(true);
+        return transportistaRepository.save(transportista);
+    }
+
+    @Transactional
+    public TransportistaDTO crearTransportista(String nombre) {
+        if (transportistaRepository.findByNombreIgnoreCase(nombre.trim()).isPresent()) {
+            throw new IllegalArgumentException("Ya existe un transporte con ese nombre");
         }
 
         Transportista transportista = new Transportista();
-        transportista.setCodigoInterno(codigoInterno);
-        transportista.setChofer(chofer);
-        transportista.setVehiculo(vehiculo);
+        transportista.setNombre(nombre.trim());
         transportista.setActivo(true);
 
         transportista = transportistaRepository.save(transportista);
@@ -32,13 +59,19 @@ public class TransportistaService {
     }
 
     public List<TransportistaDTO> obtenerTodosLosTransportistas() {
-        return transportistaRepository.findAllByOrderByCodigoInternoAsc().stream()
+        return transportistaRepository.findAllByOrderByNombreAsc().stream()
                 .map(this::convertirADTO)
                 .collect(Collectors.toList());
     }
 
     public List<TransportistaDTO> obtenerTransportistasActivos() {
-        return transportistaRepository.findByActivoTrueOrderByCodigoInternoAsc().stream()
+        return transportistaRepository.findByActivoTrueOrderByNombreAsc().stream()
+                .map(this::convertirADTO)
+                .collect(Collectors.toList());
+    }
+
+    public List<TransportistaDTO> buscarTransportistas(String busqueda) {
+        return transportistaRepository.findByNombreContainingIgnoreCaseAndActivoTrueOrderByNombreAsc(busqueda).stream()
                 .map(this::convertirADTO)
                 .collect(Collectors.toList());
     }
@@ -50,23 +83,17 @@ public class TransportistaService {
     }
 
     @Transactional
-    public TransportistaDTO actualizarTransportista(Long id, String codigoInterno, String chofer, String vehiculo, Boolean activo) {
+    public TransportistaDTO actualizarTransportista(Long id, String nombre, Boolean activo) {
         Transportista transportista = transportistaRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Transportista no encontrado"));
 
-        if (codigoInterno != null && !codigoInterno.equals(transportista.getCodigoInterno())) {
-            if (transportistaRepository.findByCodigoInterno(codigoInterno).isPresent()) {
-                throw new IllegalArgumentException("Ya existe un transportista con ese código interno");
+        if (nombre != null && !nombre.trim().isEmpty()) {
+            // Verificar si el nuevo nombre ya existe (excepto el transportista actual)
+            Optional<Transportista> transportistaConMismoNombre = transportistaRepository.findByNombreIgnoreCase(nombre.trim());
+            if (transportistaConMismoNombre.isPresent() && !transportistaConMismoNombre.get().getId().equals(id)) {
+                throw new IllegalArgumentException("Ya existe un transporte con ese nombre");
             }
-            transportista.setCodigoInterno(codigoInterno);
-        }
-
-        if (chofer != null) {
-            transportista.setChofer(chofer);
-        }
-
-        if (vehiculo != null) {
-            transportista.setVehiculo(vehiculo);
+            transportista.setNombre(nombre.trim());
         }
 
         if (activo != null) {
@@ -91,9 +118,7 @@ public class TransportistaService {
     private TransportistaDTO convertirADTO(Transportista transportista) {
         TransportistaDTO dto = new TransportistaDTO();
         dto.setId(transportista.getId());
-        dto.setCodigoInterno(transportista.getCodigoInterno());
-        dto.setChofer(transportista.getChofer());
-        dto.setVehiculo(transportista.getVehiculo());
+        dto.setNombre(transportista.getNombre());
         dto.setActivo(transportista.getActivo());
         return dto;
     }

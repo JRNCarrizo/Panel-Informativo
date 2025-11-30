@@ -4,6 +4,7 @@ import com.Panelinformativo.grupos.model.Grupo;
 import com.Panelinformativo.transportistas.model.Transportista;
 import com.Panelinformativo.usuarios.model.Usuario;
 import com.Panelinformativo.zonas.model.Zona;
+import com.Panelinformativo.vueltas.model.Vuelta;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -36,6 +37,10 @@ public class Pedido {
     @Column(nullable = false)
     private EstadoPedido estado = EstadoPedido.PENDIENTE;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = true)
+    private EtapaPreparacion etapaPreparacion;
+
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "grupo_id")
     private Grupo grupoAsignado;
@@ -43,6 +48,13 @@ public class Pedido {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "zona_id")
     private Zona zona;
+
+    @Column(nullable = true)
+    private Integer cantidad; // Cantidad de bultos
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "vuelta_id")
+    private Vuelta vuelta;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "usuario_creador_id", nullable = false)
@@ -67,8 +79,13 @@ public class Pedido {
 
     public enum EstadoPedido {
         PENDIENTE,
-        EN_PROCESO,
+        EN_PREPARACION,
         REALIZADO
+    }
+
+    public enum EtapaPreparacion {
+        CONTROL,
+        PENDIENTE_CARGA
     }
 }
 

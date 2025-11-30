@@ -122,7 +122,7 @@ const PantallaPublica = () => {
       setError(null);
       const [pendientes, enProceso, realizados] = await Promise.all([
         pedidoService.obtenerPorEstado('PENDIENTE'),
-        pedidoService.obtenerPorEstado('EN_PROCESO'),
+        pedidoService.obtenerPorEstado('EN_PREPARACION'),
         pedidoService.obtenerPorEstado('REALIZADO'),
       ]);
       // Ordenar pedidos pendientes por prioridad y fecha de carga
@@ -334,9 +334,7 @@ const PantallaPublica = () => {
                   </div>
                   <div className="pedido-details">
                     <div className="transportista">
-                      {pedido.transportistaChofer && pedido.transportistaVehiculo
-                        ? `${pedido.transportistaChofer} - ${pedido.transportistaVehiculo}`
-                        : pedido.transportista || 'Sin transportista'}
+                      {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
                     </div>
                     <div className="grupo">
                       {pedido.grupoNombre ? `Equipo: ${pedido.grupoNombre}` : 'Sin asignar'}

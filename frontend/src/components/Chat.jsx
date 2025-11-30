@@ -82,7 +82,7 @@ const Chat = ({ onClose, rolDestinatario }) => {
     const mensajeOptimista = {
       id: `temp-${Date.now()}`, // ID temporal
       contenido: mensajeTexto,
-      remitenteId: user?.id,
+      remitenteId: user?.id, // Asegurar que sea el mismo tipo que se usa en la comparación
       remitenteNombre: user?.nombreCompleto || user?.username,
       rolRemitente: rolUsuario,
       rolDestinatario: destinoRol,
@@ -230,12 +230,12 @@ const Chat = ({ onClose, rolDestinatario }) => {
               }
               
               // Si es nuestro mensaje, reemplazar el optimista
-              if (nuevoMensaje.remitenteId === user?.id) {
+              if (String(nuevoMensaje.remitenteId) === String(user?.id)) {
                 // Buscar mensaje optimista con el mismo contenido
                 const mensajeOptimista = prev.find(m => 
                   m.id?.toString().startsWith('temp-') &&
                   m.contenido === nuevoMensaje.contenido &&
-                  m.remitenteId === nuevoMensaje.remitenteId
+                  String(m.remitenteId) === String(nuevoMensaje.remitenteId)
                 );
                 
                 if (mensajeOptimista) {
@@ -281,7 +281,7 @@ const Chat = ({ onClose, rolDestinatario }) => {
             // Si es un mensaje optimista con el mismo contenido y remitente, también actualizar
             if (m.id?.toString().startsWith('temp-') && 
                 m.contenido === mensajeLeido.contenido &&
-                m.remitenteId === mensajeLeido.remitenteId) {
+                String(m.remitenteId) === String(mensajeLeido.remitenteId)) {
               return { ...m, leido: true };
             }
             return m;
@@ -379,11 +379,26 @@ const Chat = ({ onClose, rolDestinatario }) => {
           <div className="chat-empty">No hay mensajes hoy</div>
         ) : (
           mensajes.map((mensaje) => {
-            const esMio = mensaje.remitenteId === user?.id;
+            // Comparar IDs de forma robusta (manejar string y number)
+            const remitenteId = mensaje.remitenteId;
+            const userId = user?.id;
+            
+            // También comparar por rol como respaldo
+            const mismoRol = mensaje.rolRemitente === rolUsuario;
+            
+            // Comparar IDs
+            const remitenteIdStr = remitenteId != null ? String(remitenteId) : '';
+            const userIdStr = userId != null ? String(userId) : '';
+            const idsCoinciden = remitenteIdStr !== '' && userIdStr !== '' && remitenteIdStr === userIdStr;
+            
+            // El mensaje es mío si los IDs coinciden O si el rol coincide (respaldo)
+            const esMio = idsCoinciden || (mismoRol && remitenteIdStr !== '');
+            
             return (
               <div
                 key={mensaje.id}
                 className={`chat-message ${esMio ? 'own-message' : 'other-message'} ${!mensaje.leido && !esMio ? 'unread' : ''}`}
+                style={esMio ? { alignSelf: 'flex-start', marginLeft: '8px', marginRight: 'auto' } : { alignSelf: 'flex-end', marginRight: '8px', marginLeft: 'auto' }}
               >
                 <div className="message-header">
                   <strong>{mensaje.remitenteNombre}</strong>
