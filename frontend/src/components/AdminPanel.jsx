@@ -97,8 +97,22 @@ const AdminPanel = () => {
   const [cantidadMensajesNoLeidos, setCantidadMensajesNoLeidos] = useState(0);
   // Estado para el buscador avanzado
   const [textoBusqueda, setTextoBusqueda] = useState('');
-  // Estado para el filtro de pedidos
-  const [filtroPedidos, setFiltroPedidos] = useState('TODOS'); // 'TODOS', 'PENDIENTE', 'EN_PREPARACION', 'CONTROLADO', 'PENDIENTE_CARGA'
+  // Estado para el filtro de etapa de preparación (solo para pestaña "En Preparación")
+  const [filtroEtapaPreparacion, setFiltroEtapaPreparacion] = useState('TODOS'); // 'TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'
+  // Estados para navegación con teclado
+  const [enModoNavegacionSubPestanas, setEnModoNavegacionSubPestanas] = useState(false);
+  const [subPestanaSeleccionadaIndex, setSubPestanaSeleccionadaIndex] = useState(-1);
+  const [enModoNavegacionRegistros, setEnModoNavegacionRegistros] = useState(false);
+  const [pedidoSeleccionadoIndex, setPedidoSeleccionadoIndex] = useState(-1);
+  // Refs para los botones de sub-pestañas
+  const subPestanaButtonRefs = useRef([]);
+  // Estados para navegación en "Realizados"
+  const [diaSeleccionadoIndex, setDiaSeleccionadoIndex] = useState(-1);
+  const [enModoNavegacionDias, setEnModoNavegacionDias] = useState(false);
+  const [enModoNavegacionRegistrosRealizados, setEnModoNavegacionRegistrosRealizados] = useState(false);
+  const [pedidoSeleccionadoIndexRealizados, setPedidoSeleccionadoIndexRealizados] = useState(-1);
+  // Refs para los botones de días en "Realizados"
+  const diaButtonRefs = useRef([]);
   // Cargar pedidos realizados vistos desde localStorage
   const [pedidosRealizadosVistos, setPedidosRealizadosVistos] = useState(() => {
     try {
@@ -132,9 +146,13 @@ const AdminPanel = () => {
           }).catch(err => console.error('Error al recargar pedidos realizados:', err));
         } else if (activeTab === 'pedidos') {
           pedidoService.obtenerTodos().then(response => {
-            const pedidosFiltrados = (response.data || []).filter(p => p.estado !== 'REALIZADO');
+            const pedidosFiltrados = (response.data || []).filter(p => p.estado === 'PENDIENTE');
             setPedidos(pedidosFiltrados);
           }).catch(err => console.error('Error al recargar pedidos:', err));
+        } else if (activeTab === 'en-preparacion') {
+          pedidoService.obtenerPorEstado('EN_PREPARACION').then(response => {
+            setPedidos(response.data || []);
+          }).catch(err => console.error('Error al recargar pedidos en preparación:', err));
         }
         
         // Actualizar todos los pedidos para el contador (IMPORTANTE: esto actualiza el indicador)
@@ -261,10 +279,13 @@ const AdminPanel = () => {
         const response = await pedidoService.obtenerPorEstado('REALIZADO');
         setPedidos(response.data || []);
       } else if (activeTab === 'pedidos') {
-        // Para "pedidos", excluir los realizados
+        // Para "pedidos", solo los pendientes
         const response = await pedidoService.obtenerTodos();
-        const pedidosFiltrados = (response.data || []).filter(p => p.estado !== 'REALIZADO');
+        const pedidosFiltrados = (response.data || []).filter(p => p.estado === 'PENDIENTE');
         setPedidos(pedidosFiltrados);
+      } else if (activeTab === 'en-preparacion') {
+        const response = await pedidoService.obtenerPorEstado('EN_PREPARACION');
+        setPedidos(response.data || []);
       }
     } catch (error) {
       console.error('Error al cargar pedidos:', error);
@@ -280,8 +301,11 @@ const AdminPanel = () => {
           setPedidos(response.data || []);
         } else if (activeTab === 'pedidos') {
           const response = await pedidoService.obtenerTodos();
-          const pedidosFiltrados = (response.data || []).filter(p => p.estado !== 'REALIZADO');
+          const pedidosFiltrados = (response.data || []).filter(p => p.estado === 'PENDIENTE');
           setPedidos(pedidosFiltrados);
+        } else if (activeTab === 'en-preparacion') {
+          const response = await pedidoService.obtenerPorEstado('EN_PREPARACION');
+          setPedidos(response.data || []);
         }
       } catch (error) {
         console.error('Error al cargar pedidos:', error);
@@ -289,8 +313,17 @@ const AdminPanel = () => {
     };
 
     // Limpiar pedidos inmediatamente al cambiar de pestaña para evitar mostrar datos incorrectos
-    if (activeTab === 'pedidos' || activeTab === 'realizados') {
+    if (activeTab === 'pedidos' || activeTab === 'en-preparacion' || activeTab === 'realizados') {
       setPedidos([]);
+      setTextoBusqueda(''); // Limpiar búsqueda al cambiar de pestaña
+      if (activeTab === 'en-preparacion') {
+        setFiltroEtapaPreparacion('TODOS'); // Resetear filtro de etapa
+      }
+      // Resetear estados de navegación
+      setEnModoNavegacionSubPestanas(false);
+      setSubPestanaSeleccionadaIndex(-1);
+      setEnModoNavegacionRegistros(false);
+      setPedidoSeleccionadoIndex(-1);
       cargarSegunPestaña();
     } else if (activeTab === 'equipos') {
       cargarEquipos();
@@ -304,14 +337,26 @@ const AdminPanel = () => {
   // Agregar listener para abrir modales con Enter cuando esté en la sección correspondiente
   useEffect(() => {
     const handleKeyPress = (event) => {
-      // Solo abrir el modal si no se está escribiendo en un input, textarea o select
-      const target = event.target;
-      const isInputFocused = target.tagName === 'INPUT' || 
-                           target.tagName === 'TEXTAREA' || 
-                           target.tagName === 'SELECT' ||
-                           target.isContentEditable;
+      // No navegar si hay un modal abierto
+      if (showModal || showTransportistaModal || showUsuarioModal || showZonaModal || showVueltaModal) {
+        return;
+      }
+
+      const focusedElement = document.activeElement;
+      const isInputFocused = focusedElement && (
+        focusedElement.tagName === 'INPUT' || 
+        focusedElement.tagName === 'TEXTAREA' || 
+        focusedElement.tagName === 'SELECT' ||
+        focusedElement.isContentEditable
+      );
       
-      if (event.key === 'Enter' && !isInputFocused) {
+      // Si estamos escribiendo en un input, NO hacer nada (permitir que el input maneje TODAS las teclas)
+      if (isInputFocused) {
+        return; // NO hacer preventDefault ni nada, solo retornar
+      }
+      
+      // Solo procesar Enter si NO estamos en un input
+      if (event.key === 'Enter') {
         if (activeTab === 'pedidos' && !showModal) {
           event.preventDefault();
           setShowModal(true);
@@ -333,12 +378,12 @@ const AdminPanel = () => {
       }
     };
 
-    window.addEventListener('keydown', handleKeyPress);
+    window.addEventListener('keydown', handleKeyPress, false); // Usar bubble phase, no capture
 
     return () => {
-      window.removeEventListener('keydown', handleKeyPress);
+      window.removeEventListener('keydown', handleKeyPress, false);
     };
-  }, [activeTab, showModal, showTransportistaModal, showUsuarioModal]);
+  }, [activeTab, showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal]);
 
   // Enfocar el primer campo cuando se abre el modal de pedidos
   useEffect(() => {
@@ -441,34 +486,48 @@ const AdminPanel = () => {
     };
   }, [showModal, showTransportistaModal, showUsuarioModal, showChat]);
 
-  // Navegación con flechas entre pestañas
+  // Navegación con flechas entre pestañas principales (solo si no estamos en modo navegación de sub-pestañas)
   useEffect(() => {
     const handleKeyDown = (event) => {
-      // No navegar si hay un modal abierto o si el usuario está escribiendo
-      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal) {
+      // No navegar si hay un modal abierto
+      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal) {
         return;
       }
 
-      // No navegar si el usuario está en un input, textarea o select
       const focusedElement = document.activeElement;
-      if (focusedElement && (
+      const isInputFocused = focusedElement && (
         focusedElement.tagName === 'INPUT' || 
         focusedElement.tagName === 'TEXTAREA' || 
         focusedElement.tagName === 'SELECT' ||
         focusedElement.isContentEditable
-      )) {
+      );
+      
+      // Si estamos escribiendo en un input, NO hacer nada (permitir que el input maneje TODAS las teclas)
+      if (isInputFocused) {
+        return; // NO hacer preventDefault ni nada, solo retornar
+      }
+
+      // No navegar si estamos en modo navegación de sub-pestañas o registros en "En Preparación"
+      if (activeTab === 'en-preparacion' && (enModoNavegacionSubPestanas || enModoNavegacionRegistros)) {
+        return;
+      }
+      // No navegar si estamos en modo navegación de días o registros en "Realizados"
+      if (activeTab === 'realizados' && (enModoNavegacionDias || enModoNavegacionRegistrosRealizados)) {
         return;
       }
 
-      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'equipos'];
+      const tabs = ['pedidos', 'en-preparacion', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'equipos'];
       const currentIndex = tabs.indexOf(activeTab);
 
-      if (event.key === 'ArrowLeft' && currentIndex > 0) {
-        event.preventDefault();
-        setActiveTab(tabs[currentIndex - 1]);
-      } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
-        event.preventDefault();
-        setActiveTab(tabs[currentIndex + 1]);
+      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros ni de sub-pestañas)
+      if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros && !enModoNavegacionDias && !enModoNavegacionRegistrosRealizados && !isInputFocused) {
+        if (event.key === 'ArrowLeft' && currentIndex > 0) {
+          event.preventDefault();
+          setActiveTab(tabs[currentIndex - 1]);
+        } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
+          event.preventDefault();
+          setActiveTab(tabs[currentIndex + 1]);
+        }
       }
     };
 
@@ -476,7 +535,173 @@ const AdminPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activeTab, showModal, showUsuarioModal, showTransportistaModal]);
+  }, [activeTab, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal, enModoNavegacionSubPestanas, enModoNavegacionRegistros, enModoNavegacionDias, enModoNavegacionRegistrosRealizados]);
+
+  // Navegación con teclado para la pestaña "En Preparación"
+  useEffect(() => {
+    if (activeTab !== 'en-preparacion') {
+      return;
+    }
+
+    const handleKeyDown = (event) => {
+      // No navegar si hay un modal abierto
+      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal) {
+        return;
+      }
+
+      const focusedElement = document.activeElement;
+      const isInputFocused = focusedElement && (
+        focusedElement.tagName === 'INPUT' || 
+        focusedElement.tagName === 'TEXTAREA' || 
+        focusedElement.tagName === 'SELECT' ||
+        focusedElement.isContentEditable
+      );
+
+      // Si estamos escribiendo en un input, NO hacer nada (permitir que el input maneje TODAS las teclas)
+      if (isInputFocused) {
+        return; // NO hacer preventDefault ni nada, solo retornar
+      }
+
+      // Obtener pedidos filtrados
+      const pedidosFiltrados = pedidos.filter(pedido => {
+        if (pedido.estado !== 'EN_PREPARACION') return false;
+        if (filtroEtapaPreparacion === 'TODOS') return true;
+        if (filtroEtapaPreparacion === 'SIN_CONTROL') return !pedido.etapaPreparacion;
+        if (filtroEtapaPreparacion === 'CONTROL') return pedido.etapaPreparacion === 'CONTROL';
+        if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') return pedido.etapaPreparacion === 'PENDIENTE_CARGA';
+        return true;
+      }).filter(pedido => {
+        // Aplicar filtro de búsqueda
+        if (textoBusqueda.trim()) {
+          const busqueda = textoBusqueda.toLowerCase().trim();
+          const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+          const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+          const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+          const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+          return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+        }
+        return true;
+      });
+
+      // Si estamos en la pestaña principal y presionamos flecha abajo, entrar en modo navegación de sub-pestañas
+      if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros && event.key === 'ArrowDown') {
+        event.preventDefault();
+        setEnModoNavegacionSubPestanas(true);
+        setSubPestanaSeleccionadaIndex(0);
+        const firstSubButton = subPestanaButtonRefs.current[0];
+        if (firstSubButton) {
+          firstSubButton.focus();
+        }
+        return;
+      }
+
+      // Si estamos navegando sub-pestañas
+      if (enModoNavegacionSubPestanas && !enModoNavegacionRegistros) {
+        // Navegación izquierda/derecha entre sub-pestañas
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          event.preventDefault();
+          const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
+          const nuevoIndex = event.key === 'ArrowLeft'
+            ? (subPestanaSeleccionadaIndex > 0 ? subPestanaSeleccionadaIndex - 1 : subPestanas.length - 1)
+            : (subPestanaSeleccionadaIndex < subPestanas.length - 1 ? subPestanaSeleccionadaIndex + 1 : 0);
+          setSubPestanaSeleccionadaIndex(nuevoIndex);
+          const subButton = subPestanaButtonRefs.current[nuevoIndex];
+          if (subButton) {
+            subButton.focus();
+          }
+          return;
+        }
+
+        // Si presionamos flecha abajo desde una sub-pestaña, entrar en modo navegación de registros
+        if (event.key === 'ArrowDown' && pedidosFiltrados.length > 0) {
+          event.preventDefault();
+          setEnModoNavegacionRegistros(true);
+          setPedidoSeleccionadoIndex(0);
+          setEnModoNavegacionSubPestanas(false);
+          // Enfocar el primer registro
+          const firstPedido = pedidosFiltrados[0];
+          if (firstPedido) {
+            const pedidoCard = document.querySelector(`[data-pedido-id="${firstPedido.id}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+          }
+          return;
+        }
+
+        // Si presionamos flecha arriba, salir del modo navegación de sub-pestañas
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          setEnModoNavegacionSubPestanas(false);
+          setSubPestanaSeleccionadaIndex(-1);
+          // Enfocar el botón de la pestaña principal
+          const tabButton = document.querySelector('.tabs button.active');
+          if (tabButton) {
+            tabButton.focus();
+          }
+          return;
+        }
+      }
+
+      // Si estamos navegando registros
+      if (enModoNavegacionRegistros && pedidoSeleccionadoIndex >= 0) {
+        // Si estamos en el primer registro y presionamos flecha arriba, volver a sub-pestañas
+        if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0) {
+          event.preventDefault();
+          setEnModoNavegacionRegistros(false);
+          setPedidoSeleccionadoIndex(-1);
+          setEnModoNavegacionSubPestanas(true);
+          setSubPestanaSeleccionadaIndex(0);
+          const firstSubButton = subPestanaButtonRefs.current[0];
+          if (firstSubButton) {
+            firstSubButton.focus();
+          }
+          return;
+        }
+
+        // Navegación arriba/abajo entre registros
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowUp'
+            ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosFiltrados.length - 1)
+            : (pedidoSeleccionadoIndex < pedidosFiltrados.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
+          setPedidoSeleccionadoIndex(nuevoIndex);
+          
+          const pedido = pedidosFiltrados[nuevoIndex];
+          if (pedido) {
+            const pedidoCard = document.querySelector(`[data-pedido-id="${pedido.id}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+          }
+          return;
+        }
+
+        // Navegación izquierda/derecha entre registros (si hay más de uno)
+        if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosFiltrados.length > 1) {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowLeft'
+            ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosFiltrados.length - 1)
+            : (pedidoSeleccionadoIndex < pedidosFiltrados.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
+          setPedidoSeleccionadoIndex(nuevoIndex);
+          
+          const pedido = pedidosFiltrados[nuevoIndex];
+          if (pedido) {
+            const pedidoCard = document.querySelector(`[data-pedido-id="${pedido.id}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+          }
+          return;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeTab, enModoNavegacionSubPestanas, subPestanaSeleccionadaIndex, enModoNavegacionRegistros, pedidoSeleccionadoIndex, pedidos, filtroEtapaPreparacion, textoBusqueda, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal]);
 
   const cargarUsuarios = async () => {
     try {
@@ -773,6 +998,25 @@ const AdminPanel = () => {
     return pedido.estado.replace('_', ' ');
   };
 
+  // Función para obtener cantidad de pedidos por etapa de preparación
+  const getCantidadPorEtapa = (etapa) => {
+    if (activeTab !== 'en-preparacion') return 0;
+    const pedidosEnPreparacion = pedidos.filter(p => p.estado === 'EN_PREPARACION');
+    
+    switch (etapa) {
+      case 'TODOS':
+        return pedidosEnPreparacion.length;
+      case 'SIN_CONTROL':
+        return pedidosEnPreparacion.filter(p => !p.etapaPreparacion).length;
+      case 'CONTROL':
+        return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'CONTROL').length;
+      case 'PENDIENTE_CARGA':
+        return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA').length;
+      default:
+        return 0;
+    }
+  };
+
   const getEstadoColor = (pedido) => {
     if (pedido.estado === 'REALIZADO') {
       return '#4CAF50';
@@ -804,6 +1048,11 @@ const AdminPanel = () => {
     }
     return nuevos.length;
   }, [todosLosPedidos, pedidosRealizadosVistos]);
+
+  // Calcular cantidad de pedidos en preparación
+  const cantidadEnPreparacion = useMemo(() => {
+    return todosLosPedidos.filter(p => p.estado === 'EN_PREPARACION').length;
+  }, [todosLosPedidos]);
 
   // Marcar pedidos realizados como vistos cuando se expande un día
   // NO marcar automáticamente al entrar a la pestaña, solo cuando se ven
@@ -880,27 +1129,200 @@ const AdminPanel = () => {
   // Usar useMemo para estabilizar pedidosAgrupadosPorDia
   const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [activeTab, pedidos, textoBusqueda]);
   const pedidosPorDia = useMemo(() => getPedidosPorDia(), [activeTab, pedidos]);
+  
+  // Estabilizar la longitud para evitar cambios en el array de dependencias
+  const pedidosAgrupadosPorDiaLength = pedidosAgrupadosPorDia?.length ?? 0;
 
-  // Limpiar días expandidos cuando se cambia de pestaña (todos los días cerrados por defecto)
-  // O expandir automáticamente cuando hay búsqueda activa
+  // Expandir automáticamente los días con resultados cuando hay búsqueda activa en "Realizados"
   useEffect(() => {
     if (activeTab === 'realizados' && pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0) {
       if (textoBusqueda.trim()) {
         // Si hay búsqueda activa, expandir todos los días que tienen resultados
         setDiasExpandidos(new Set(pedidosAgrupadosPorDia.map(dia => dia.fecha)));
-      } else {
-        // Si no hay búsqueda, mantener el comportamiento original
-        // (no expandir automáticamente, solo si el usuario lo hace manualmente)
       }
-    } else if (activeTab !== 'realizados') {
+      // Si no hay búsqueda, mantener el comportamiento original (no hacer nada)
+    }
+  }, [activeTab, pedidosAgrupadosPorDia, textoBusqueda]);
+
+  // Limpiar estados cuando se cambia de pestaña (solo cuando cambia activeTab, NO cuando cambia textoBusqueda)
+  useEffect(() => {
+    if (activeTab !== 'realizados') {
       // Limpiar días expandidos cuando se cambia de pestaña
       setDiasExpandidos(new Set());
       // Resetear el flag cuando se cambia de pestaña
       hoyColapsadoManualmente.current = false;
       // Limpiar búsqueda al cambiar de pestaña
       setTextoBusqueda('');
+      // Resetear navegación de "Realizados"
+      setEnModoNavegacionDias(false);
+      setDiaSeleccionadoIndex(-1);
+      setEnModoNavegacionRegistrosRealizados(false);
+      setPedidoSeleccionadoIndexRealizados(-1);
     }
-  }, [activeTab, pedidosAgrupadosPorDia, textoBusqueda]);
+  }, [activeTab]);
+
+  // Navegación con teclado para la pestaña "Realizados"
+  useEffect(() => {
+    if (activeTab !== 'realizados') {
+      return;
+    }
+
+    const handleKeyDown = (event) => {
+      // No navegar si hay un modal abierto
+      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal) {
+        return;
+      }
+
+      const focusedElement = document.activeElement;
+      const isInputFocused = focusedElement && (
+        focusedElement.tagName === 'INPUT' || 
+        focusedElement.tagName === 'TEXTAREA' || 
+        focusedElement.tagName === 'SELECT' ||
+        focusedElement.isContentEditable
+      );
+
+      // Si estamos escribiendo en un input, NO hacer nada (permitir que el input maneje TODAS las teclas)
+      if (isInputFocused) {
+        return; // NO hacer preventDefault ni nada, solo retornar
+      }
+
+      const pedidosAgrupados = pedidosAgrupadosPorDia;
+      if (!pedidosAgrupados || pedidosAgrupados.length === 0) {
+        return;
+      }
+
+      // Si estamos en la pestaña principal y presionamos flecha abajo, entrar en modo navegación de días
+      if (!enModoNavegacionDias && !enModoNavegacionRegistrosRealizados && event.key === 'ArrowDown') {
+        event.preventDefault();
+        setEnModoNavegacionDias(true);
+        setDiaSeleccionadoIndex(0);
+        const firstDiaButton = diaButtonRefs.current[0];
+        if (firstDiaButton) {
+          firstDiaButton.focus();
+        }
+        return;
+      }
+
+      // Si estamos navegando días
+      if (enModoNavegacionDias && !enModoNavegacionRegistrosRealizados) {
+        // Navegación arriba/abajo entre días
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowUp'
+            ? (diaSeleccionadoIndex > 0 ? diaSeleccionadoIndex - 1 : pedidosAgrupados.length - 1)
+            : (diaSeleccionadoIndex < pedidosAgrupados.length - 1 ? diaSeleccionadoIndex + 1 : 0);
+          setDiaSeleccionadoIndex(nuevoIndex);
+          const diaButton = diaButtonRefs.current[nuevoIndex];
+          if (diaButton) {
+            diaButton.focus();
+          }
+          return;
+        }
+
+        // Enter para expandir/colapsar el día seleccionado
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          const dia = pedidosAgrupados[diaSeleccionadoIndex];
+          if (dia) {
+            toggleDia(dia.fecha);
+            // Si el día se expande y tiene pedidos, entrar en modo navegación de registros
+            if (!diasExpandidos.has(dia.fecha) && dia.pedidos.length > 0) {
+              setEnModoNavegacionRegistrosRealizados(true);
+              setPedidoSeleccionadoIndexRealizados(0);
+              setEnModoNavegacionDias(false);
+              // Enfocar el primer registro del día expandido
+              setTimeout(() => {
+                const firstPedido = dia.pedidos[0];
+                if (firstPedido) {
+                  const pedidoCard = document.querySelector(`[data-pedido-id-realizado="${firstPedido.id}"]`);
+                  if (pedidoCard) {
+                    pedidoCard.focus();
+                  }
+                }
+              }, 100);
+            }
+          }
+          return;
+        }
+
+        // Si presionamos flecha arriba desde el primer día, salir del modo navegación
+        if (event.key === 'ArrowUp' && diaSeleccionadoIndex === 0) {
+          event.preventDefault();
+          setEnModoNavegacionDias(false);
+          setDiaSeleccionadoIndex(-1);
+          const tabButton = document.querySelector('.tabs button.active');
+          if (tabButton) {
+            tabButton.focus();
+          }
+          return;
+        }
+      }
+
+      // Si estamos navegando registros de un día expandido
+      if (enModoNavegacionRegistrosRealizados && pedidoSeleccionadoIndexRealizados >= 0) {
+        const dia = pedidosAgrupados[diaSeleccionadoIndex];
+        if (!dia || !diasExpandidos.has(dia.fecha)) {
+          return;
+        }
+
+        const pedidosDelDia = dia.pedidos;
+
+        // Si estamos en el primer registro y presionamos flecha arriba, volver a días
+        if (event.key === 'ArrowUp' && pedidoSeleccionadoIndexRealizados === 0) {
+          event.preventDefault();
+          setEnModoNavegacionRegistrosRealizados(false);
+          setPedidoSeleccionadoIndexRealizados(-1);
+          setEnModoNavegacionDias(true);
+          const diaButton = diaButtonRefs.current[diaSeleccionadoIndex];
+          if (diaButton) {
+            diaButton.focus();
+          }
+          return;
+        }
+
+        // Navegación arriba/abajo entre registros
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowUp'
+            ? (pedidoSeleccionadoIndexRealizados > 0 ? pedidoSeleccionadoIndexRealizados - 1 : pedidosDelDia.length - 1)
+            : (pedidoSeleccionadoIndexRealizados < pedidosDelDia.length - 1 ? pedidoSeleccionadoIndexRealizados + 1 : 0);
+          setPedidoSeleccionadoIndexRealizados(nuevoIndex);
+          
+          const pedido = pedidosDelDia[nuevoIndex];
+          if (pedido) {
+            const pedidoCard = document.querySelector(`[data-pedido-id-realizado="${pedido.id}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+          }
+          return;
+        }
+
+        // Navegación izquierda/derecha entre registros (si hay más de uno)
+        if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosDelDia.length > 1) {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowLeft'
+            ? (pedidoSeleccionadoIndexRealizados > 0 ? pedidoSeleccionadoIndexRealizados - 1 : pedidosDelDia.length - 1)
+            : (pedidoSeleccionadoIndexRealizados < pedidosDelDia.length - 1 ? pedidoSeleccionadoIndexRealizados + 1 : 0);
+          setPedidoSeleccionadoIndexRealizados(nuevoIndex);
+          
+          const pedido = pedidosDelDia[nuevoIndex];
+          if (pedido) {
+            const pedidoCard = document.querySelector(`[data-pedido-id-realizado="${pedido.id}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+          }
+          return;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeTab, enModoNavegacionDias, diaSeleccionadoIndex, enModoNavegacionRegistrosRealizados, pedidoSeleccionadoIndexRealizados, diasExpandidos, pedidosAgrupadosPorDiaLength, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal]);
 
   const toggleDia = (fecha) => {
     setDiasExpandidos(prev => {
@@ -1007,6 +1429,35 @@ const AdminPanel = () => {
           Pedidos
         </button>
         <button
+          className={activeTab === 'en-preparacion' ? 'active' : ''}
+          onClick={() => setActiveTab('en-preparacion')}
+          style={{ position: 'relative' }}
+        >
+          En Preparación
+          {cantidadEnPreparacion > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: '-8px',
+                right: '-8px',
+                backgroundColor: '#F44336',
+                color: 'white',
+                borderRadius: '50%',
+                width: '24px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              }}
+            >
+              {cantidadEnPreparacion}
+            </span>
+          )}
+        </button>
+        <button
           className={activeTab === 'realizados' ? 'active' : ''}
           onClick={() => setActiveTab('realizados')}
           style={{ position: 'relative' }}
@@ -1069,11 +1520,12 @@ const AdminPanel = () => {
 
       {activeTab === 'pedidos' && (
         <div className="content-section">
-          {/* Buscador avanzado y filtros para Pedidos */}
+          {/* Buscador avanzado para Pedidos */}
           <div style={{
             display: 'flex',
-            flexDirection: 'column',
-            gap: '15px',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '20px',
             padding: '20px 40px',
             margin: '0 20px 25px 20px',
             background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
@@ -1081,110 +1533,86 @@ const AdminPanel = () => {
             borderRadius: '12px',
             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
           }}>
-            {/* Botones de filtro */}
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '10px',
-              flexWrap: 'wrap'
+              gap: '12px'
             }}>
-              {['TODOS', 'PENDIENTE', 'EN_PREPARACION', 'CONTROLADO', 'PENDIENTE_CARGA'].map((filtro) => (
+              <span style={{ fontSize: '1.8rem' }}>📋</span>
+              <h2 style={{
+                margin: 0,
+                fontSize: '1.5rem',
+                fontWeight: '700',
+                color: '#1e293b',
+                letterSpacing: '-0.02em'
+              }}>
+                Planillas Pendientes
+              </h2>
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flex: '0 0 400px',
+              position: 'relative'
+            }}>
+              <span style={{ fontSize: '1.2rem' }}>🔍</span>
+              <input
+                type="text"
+                data-search-input="true"
+                placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                value={textoBusqueda}
+                onChange={(e) => setTextoBusqueda(e.target.value)}
+                onKeyDown={(e) => {
+                  // Detener la propagación para que los listeners globales no interfieran
+                  e.stopPropagation();
+                }}
+                onKeyPress={(e) => {
+                  // Detener la propagación para que los listeners globales no interfieran
+                  e.stopPropagation();
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px 15px',
+                  border: '2px solid #e0e0e0',
+                  borderRadius: '8px',
+                  fontSize: '0.95rem',
+                  outline: 'none',
+                  transition: 'all 0.2s',
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = '#2196F3';
+                  e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = '#e0e0e0';
+                  e.target.style.boxShadow = 'none';
+                }}
+              />
+              {textoBusqueda && (
                 <button
-                  key={filtro}
-                  onClick={() => setFiltroPedidos(filtro)}
+                  onClick={() => setTextoBusqueda('')}
                   style={{
-                    padding: '10px 20px',
-                    backgroundColor: filtroPedidos === filtro ? '#2196F3' : '#f3f4f6',
-                    color: filtroPedidos === filtro ? 'white' : '#666',
+                    padding: '8px 12px',
                     border: 'none',
-                    borderRadius: '8px',
+                    borderRadius: '6px',
+                    backgroundColor: '#f3f4f6',
+                    color: '#666',
                     cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: filtroPedidos === filtro ? '600' : '500',
+                    fontSize: '0.9rem',
                     transition: 'all 0.2s',
-                    boxShadow: filtroPedidos === filtro ? '0 2px 4px rgba(33, 150, 243, 0.3)' : 'none',
                   }}
                   onMouseEnter={(e) => {
-                    if (filtroPedidos !== filtro) {
-                      e.target.style.backgroundColor = '#e5e7eb';
-                    }
+                    e.target.style.backgroundColor = '#e5e7eb';
                   }}
                   onMouseLeave={(e) => {
-                    if (filtroPedidos !== filtro) {
-                      e.target.style.backgroundColor = '#f3f4f6';
-                    }
+                    e.target.style.backgroundColor = '#f3f4f6';
                   }}
                 >
-                  {filtro === 'TODOS' ? 'Todos' :
-                   filtro === 'PENDIENTE' ? 'Pendientes' :
-                   filtro === 'EN_PREPARACION' ? 'En Preparación' :
-                   filtro === 'CONTROLADO' ? 'Controlados' :
-                   'Pendiente de Carga'}
+                  ✕
                 </button>
-              ))}
+              )}
             </div>
-            {/* Buscador y botón Nuevo Pedido */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '20px'
-            }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                flex: '0 0 400px',
-                position: 'relative'
-              }}>
-                <span style={{ fontSize: '1.2rem' }}>🔍</span>
-                <input
-                  type="text"
-                  placeholder="Buscar por planilla, transporte, zona, vuelta..."
-                  value={textoBusqueda}
-                  onChange={(e) => setTextoBusqueda(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: '10px 15px',
-                    border: '2px solid #e0e0e0',
-                    borderRadius: '8px',
-                    fontSize: '0.95rem',
-                    outline: 'none',
-                    transition: 'all 0.2s',
-                  }}
-                  onFocus={(e) => {
-                    e.target.style.borderColor = '#2196F3';
-                    e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = '#e0e0e0';
-                    e.target.style.boxShadow = 'none';
-                  }}
-                />
-                {textoBusqueda && (
-                  <button
-                    onClick={() => setTextoBusqueda('')}
-                    style={{
-                      padding: '8px 12px',
-                      border: 'none',
-                      borderRadius: '6px',
-                      backgroundColor: '#f3f4f6',
-                      color: '#666',
-                      cursor: 'pointer',
-                      fontSize: '0.9rem',
-                      transition: 'all 0.2s',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = '#e5e7eb';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = '#f3f4f6';
-                    }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
             <button
               onClick={() => setShowModal(true)}
               style={{
@@ -1192,48 +1620,28 @@ const AdminPanel = () => {
                 backgroundColor: '#2196F3',
                 color: 'white',
                 border: 'none',
-                  borderRadius: '8px',
+                borderRadius: '8px',
                 cursor: 'pointer',
                 fontSize: '14px',
-                  fontWeight: '600',
+                fontWeight: '600',
                 boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#1976D2';
-                  e.target.style.transform = 'translateY(-1px)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#2196F3';
-                  e.target.style.transform = 'translateY(0)';
-                }}
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#1976D2';
+                e.target.style.transform = 'translateY(-1px)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#2196F3';
+                e.target.style.transform = 'translateY(0)';
+              }}
             >
               + Nuevo Pedido
             </button>
-            </div>
           </div>
           <div className="pedidos-grid">
             {pedidos.filter(pedido => {
-              if (pedido.estado === 'REALIZADO') return false;
-              
-              // Aplicar filtro de estado
-              if (filtroPedidos !== 'TODOS') {
-                if (filtroPedidos === 'PENDIENTE' && pedido.estado !== 'PENDIENTE') {
-                  return false;
-                } else if (filtroPedidos === 'EN_PREPARACION') {
-                  if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion) {
-                    return false;
-                  }
-                } else if (filtroPedidos === 'CONTROLADO') {
-                  if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion !== 'CONTROL') {
-                    return false;
-                  }
-                } else if (filtroPedidos === 'PENDIENTE_CARGA') {
-                  if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion !== 'PENDIENTE_CARGA') {
-                    return false;
-                  }
-                }
-              }
+              if (pedido.estado !== 'PENDIENTE') return false;
               
               // Aplicar filtro de búsqueda si existe
               if (textoBusqueda.trim()) {
@@ -1439,6 +1847,422 @@ const AdminPanel = () => {
         </div>
       )}
 
+      {activeTab === 'en-preparacion' && (
+        <div className="content-section">
+          {/* Contenedor con sub-pestañas y buscador para En Preparación */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '20px',
+            padding: '20px 40px',
+            margin: '0 20px 25px 20px',
+            background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+            border: '1px solid #e2e8f0',
+            borderRadius: '12px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
+          }}>
+            {/* Sub-pestañas de filtro */}
+            <div style={{ display: 'flex', gap: '10px', flex: 1 }}>
+              {['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'].map((filtro, index) => (
+                <button
+                  key={filtro}
+                  ref={(el) => { if (el) subPestanaButtonRefs.current[index] = el; }}
+                  onClick={() => setFiltroEtapaPreparacion(filtro)}
+                  style={{
+                    padding: '10px 20px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '0.95rem',
+                    fontWeight: filtroEtapaPreparacion === filtro ? '600' : '500',
+                    backgroundColor: filtroEtapaPreparacion === filtro ? '#2196F3' : '#f3f4f6',
+                    color: filtroEtapaPreparacion === filtro ? 'white' : '#666',
+                    transition: 'all 0.2s',
+                    position: 'relative',
+                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === index ? '3px solid #2196F3' : 'none',
+                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === index ? '2px' : '0',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (filtroEtapaPreparacion !== filtro) {
+                      e.target.style.backgroundColor = '#e5e7eb';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (filtroEtapaPreparacion !== filtro) {
+                      e.target.style.backgroundColor = '#f3f4f6';
+                    }
+                  }}
+                  onFocus={() => {
+                    setEnModoNavegacionSubPestanas(true);
+                    setSubPestanaSeleccionadaIndex(index);
+                  }}
+                >
+                  {filtro === 'TODOS' ? 'Todos' :
+                   filtro === 'SIN_CONTROL' ? 'Sin Control' :
+                   filtro === 'CONTROL' ? 'Control' :
+                   'Pendiente de Carga'}
+                  {getCantidadPorEtapa(filtro) > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '-8px',
+                        right: '-8px',
+                        backgroundColor: '#F44336',
+                        color: 'white',
+                        borderRadius: '50%',
+                        width: '24px',
+                        height: '24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      }}
+                    >
+                      {getCantidadPorEtapa(filtro)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+            {/* Buscador */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flex: '0 0 400px',
+              position: 'relative'
+            }}>
+              <span style={{ fontSize: '1.2rem' }}>🔍</span>
+              <input
+                type="text"
+                data-search-input="true"
+                placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                value={textoBusqueda}
+                onChange={(e) => setTextoBusqueda(e.target.value)}
+                onKeyDown={(e) => {
+                  // Detener la propagación para que los listeners globales no interfieran
+                  e.stopPropagation();
+                }}
+                onKeyPress={(e) => {
+                  // Detener la propagación para que los listeners globales no interfieran
+                  e.stopPropagation();
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px 15px',
+                  border: '2px solid #e0e0e0',
+                  borderRadius: '8px',
+                  fontSize: '0.95rem',
+                  outline: 'none',
+                  transition: 'all 0.2s',
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = '#2196F3';
+                  e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = '#e0e0e0';
+                  e.target.style.boxShadow = 'none';
+                }}
+              />
+              {textoBusqueda && (
+                <button
+                  onClick={() => setTextoBusqueda('')}
+                  style={{
+                    padding: '8px 12px',
+                    border: 'none',
+                    borderRadius: '6px',
+                    backgroundColor: '#f3f4f6',
+                    color: '#666',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.backgroundColor = '#e5e7eb';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.backgroundColor = '#f3f4f6';
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Grid de pedidos en preparación */}
+          <div className="pedidos-grid">
+            {pedidos.filter(pedido => {
+              if (pedido.estado !== 'EN_PREPARACION') return false;
+              
+              // Aplicar filtro de etapa
+              if (filtroEtapaPreparacion === 'TODOS') {
+                // Todos los pedidos en preparación
+              } else if (filtroEtapaPreparacion === 'SIN_CONTROL') {
+                if (pedido.etapaPreparacion) return false;
+              } else if (filtroEtapaPreparacion === 'CONTROL') {
+                if (pedido.etapaPreparacion !== 'CONTROL') return false;
+              } else if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') {
+                if (pedido.etapaPreparacion !== 'PENDIENTE_CARGA') return false;
+              }
+              
+              // Aplicar filtro de búsqueda si existe
+              if (textoBusqueda.trim()) {
+                const busqueda = textoBusqueda.toLowerCase().trim();
+                const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
+                const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
+                const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
+                const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
+                return matchPlanilla || matchTransporte || matchZona || matchVuelta;
+              }
+              return true;
+            }).map((pedido, index) => (
+              <div 
+                key={pedido.id} 
+                className="pedido-card admin-pedido-card"
+                data-pedido-id={pedido.id}
+                tabIndex={0}
+                style={{
+                  outline: enModoNavegacionRegistros && pedidoSeleccionadoIndex === index ? '3px solid #2196F3' : 'none',
+                  outlineOffset: enModoNavegacionRegistros && pedidoSeleccionadoIndex === index ? '2px' : '0',
+                }}
+                onFocus={() => {
+                  setEnModoNavegacionRegistros(true);
+                  setPedidoSeleccionadoIndex(index);
+                }}
+              >
+                <div className="pedido-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '1.5rem',
+                      color: 'white',
+                      fontWeight: '700',
+                      boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
+                    }}>
+                      📦
+                    </div>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
+                        Planilla #{pedido.numeroPlanilla}
+                      </h3>
+                      <div style={{ 
+                        fontSize: '0.85rem', 
+                        color: '#64748b', 
+                        marginTop: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <span
+                    className="prioridad-badge"
+                    style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
+                  >
+                    {pedido.prioridad}
+                  </span>
+                </div>
+                
+                <div className="pedido-info">
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div className="info-item">
+                      <div className="info-label">🚚 Transporte</div>
+                      <div className="info-value">
+                        {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
+                      </div>
+                    </div>
+                    {pedido.cantidad && (
+                      <div className="info-item">
+                        <div className="info-label">📊 Cantidad</div>
+                        <div className="info-value">{pedido.cantidad}</div>
+                      </div>
+                    )}
+                      </div>
+                  
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    {pedido.zonaNombre && (
+                      <div className="info-item">
+                        <div className="info-label">📍 Zona</div>
+                        <div className="info-value">{pedido.zonaNombre}</div>
+                      </div>
+                    )}
+                    {pedido.vueltaNombre && (
+                      <div className="info-item">
+                        <div className="info-label">🔄 Vuelta</div>
+                        <div className="info-value">{pedido.vueltaNombre}</div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '16px',
+                    marginBottom: '16px'
+                  }}>
+                    <div className="info-item">
+                      <div className="info-label">👥 Equipo</div>
+                      <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
+                    </div>
+                    <div className="info-item">
+                      <div className="info-label">📋 Estado</div>
+                      <span
+                        className="estado-badge"
+                        style={{ backgroundColor: getEstadoColor(pedido) }}
+                      >
+                        {getEstadoTexto(pedido)}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {pedido.etapaPreparacion === 'PENDIENTE_CARGA' && pedido.fechaActualizacion && (
+                    <div style={{
+                      padding: '12px',
+                      background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                      borderRadius: '8px',
+                      border: '1px solid #ffb74d',
+                      marginTop: '8px',
+                      marginBottom: '8px'
+                    }}>
+                      <div style={{ 
+                        fontSize: '0.85rem', 
+                        fontWeight: '600', 
+                        color: '#E65100',
+                        marginBottom: '4px'
+                      }}>
+                        📦 Pendiente de Carga
+                      </div>
+                      <div style={{ 
+                        fontSize: '0.9rem', 
+                        color: '#F57C00',
+                        fontWeight: '500'
+                      }}>
+                        {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
+                    <div style={{
+                      padding: '12px',
+                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                      borderRadius: '8px',
+                      border: '1px solid #86efac',
+                      marginTop: '8px'
+                    }}>
+                      <div style={{ 
+                        fontSize: '0.85rem', 
+                        fontWeight: '600', 
+                        color: '#166534',
+                        marginBottom: '4px'
+                      }}>
+                        ✅ Finalizado
+                      </div>
+                      <div style={{ 
+                        fontSize: '0.9rem', 
+                        color: '#15803d',
+                        fontWeight: '500'
+                      }}>
+                        {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {pedidos.filter(pedido => {
+              if (pedido.estado !== 'EN_PREPARACION') return false;
+              if (filtroEtapaPreparacion === 'TODOS') return true;
+              if (filtroEtapaPreparacion === 'SIN_CONTROL') return !pedido.etapaPreparacion;
+              if (filtroEtapaPreparacion === 'CONTROL') return pedido.etapaPreparacion === 'CONTROL';
+              if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') return pedido.etapaPreparacion === 'PENDIENTE_CARGA';
+              return true;
+            }).length === 0 && (
+              <div className="no-pedidos" style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '60px 20px',
+                textAlign: 'center',
+                minHeight: '300px',
+              }}>
+                <div style={{
+                  fontSize: '4rem',
+                  marginBottom: '20px',
+                  opacity: 0.3,
+                }}>
+                  ⚙️
+                </div>
+                <h3 style={{
+                  fontSize: '1.5rem',
+                  fontWeight: '600',
+                  color: '#333',
+                  margin: '0 0 10px 0',
+                }}>
+                  {filtroEtapaPreparacion === 'TODOS' 
+                    ? 'No hay pedidos en preparación' 
+                    : filtroEtapaPreparacion === 'SIN_CONTROL'
+                    ? 'No hay pedidos sin control'
+                    : filtroEtapaPreparacion === 'CONTROL'
+                    ? 'No hay pedidos en control'
+                    : 'No hay pedidos pendientes de carga'}
+                </h3>
+                <p style={{
+                  fontSize: '1rem',
+                  color: '#666',
+                  margin: '0',
+                  maxWidth: '400px',
+                }}>
+                  Los pedidos que estén siendo preparados aparecerán en esta sección.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {activeTab === 'realizados' && (
         <div className="content-section">
           {/* Buscador avanzado para Realizados */}
@@ -1480,9 +2304,18 @@ const AdminPanel = () => {
               <span style={{ fontSize: '1.2rem' }}>🔍</span>
               <input
                 type="text"
+                data-search-input="true"
                 placeholder="Buscar por planilla, transporte, zona, vuelta..."
                 value={textoBusqueda}
                 onChange={(e) => setTextoBusqueda(e.target.value)}
+                onKeyDown={(e) => {
+                  // Detener la propagación para que los listeners globales no interfieran
+                  e.stopPropagation();
+                }}
+                onKeyPress={(e) => {
+                  // Detener la propagación para que los listeners globales no interfieran
+                  e.stopPropagation();
+                }}
                 style={{
                   flex: 1,
                   padding: '10px 15px',
@@ -1528,7 +2361,7 @@ const AdminPanel = () => {
           </div>
           {pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              {pedidosAgrupadosPorDia.map((dia) => (
+              {pedidosAgrupadosPorDia.map((dia, index) => (
                 <div
                   key={dia.fecha}
                   style={{
@@ -1541,7 +2374,21 @@ const AdminPanel = () => {
                 >
                   {/* Encabezado del día - clickeable para expandir/colapsar */}
                   <div
+                    ref={(el) => {
+                      if (el) {
+                        diaButtonRefs.current[index] = el;
+                      }
+                    }}
+                    tabIndex={0}
+                    onClick={() => toggleDia(dia.fecha)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleDia(dia.fecha);
+                      }
+                    }}
                     style={{
+                      cursor: 'pointer',
                       padding: '15px 20px',
                       backgroundColor: dia.esHoy ? '#E3F2FD' : '#FFFFFF',
                       border: dia.esHoy ? '2px solid #2196F3' : '2px solid #E0E0E0',
@@ -1552,12 +2399,20 @@ const AdminPanel = () => {
                       alignItems: 'center',
                       transition: 'all 0.2s ease',
                       boxShadow: dia.esHoy ? '0 2px 4px rgba(33, 150, 243, 0.2)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
+                      outline: diaSeleccionadoIndex === index ? '3px solid #2196F3' : 'none',
+                      outlineOffset: '-2px',
+                    }}
+                    onFocus={(e) => {
+                      if (diaSeleccionadoIndex === index) {
+                        e.currentTarget.style.outline = '3px solid #2196F3';
+                      }
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.outline = 'none';
                     }}
                   >
                     <div
-                      onClick={() => toggleDia(dia.fecha)}
                       style={{
-                        cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '15px',
@@ -1644,8 +2499,22 @@ const AdminPanel = () => {
                           return matchPlanilla || matchTransporte || matchZona || matchVuelta;
                         }
                         return true;
-                      }).map((pedido) => (
-                        <div key={pedido.id} className="pedido-card admin-pedido-card">
+                      }).map((pedido, pedidoIndex) => (
+                        <div 
+                          key={pedido.id} 
+                          className="pedido-card admin-pedido-card"
+                          data-pedido-id-realizado={pedido.id}
+                          tabIndex={0}
+                          style={{
+                            outline: (diaSeleccionadoIndex === index && enModoNavegacionRegistrosRealizados && pedidoSeleccionadoIndexRealizados === pedidoIndex) ? '3px solid #2196F3' : 'none',
+                            outlineOffset: '-2px',
+                          }}
+                          onFocus={(e) => {
+                            if (diaSeleccionadoIndex === index && enModoNavegacionRegistrosRealizados) {
+                              setPedidoSeleccionadoIndexRealizados(pedidoIndex);
+                            }
+                          }}
+                        >
                           <div className="pedido-header">
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                               <div style={{
@@ -1665,7 +2534,7 @@ const AdminPanel = () => {
                               </div>
                               <div>
                                 <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
-                                  Planilla #{pedido.numeroPlanilla}
+                                  {pedido.numeroPlanilla}
                                 </h3>
                                 <div style={{ 
                                   fontSize: '0.85rem', 
@@ -1755,25 +2624,62 @@ const AdminPanel = () => {
                             
                             {pedido.fechaActualizacion && (
                               <div style={{
-                                padding: '12px',
-                                background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                borderRadius: '8px',
-                                border: '1px solid #86efac',
+                                display: 'flex',
+                                gap: '12px',
                                 marginTop: '8px'
                               }}>
-                                <div style={{ 
-                                  fontSize: '0.85rem', 
-                                  fontWeight: '600', 
-                                  color: '#166534',
-                                  marginBottom: '4px'
+                                {pedido.fechaPendienteCarga && (
+                                  <div style={{
+                                    flex: 1,
+                                    padding: '12px',
+                                    background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                                    borderRadius: '8px',
+                                    border: '1px solid #ffb74d'
+                                  }}>
+                                    <div style={{ 
+                                      fontSize: '0.85rem', 
+                                      fontWeight: '600', 
+                                      color: '#E65100',
+                                      marginBottom: '4px'
+                                    }}>
+                                      📦 Pend. de Carga
+                                    </div>
+                                    <div style={{ 
+                                      fontSize: '0.9rem', 
+                                      color: '#F57C00',
+                                      fontWeight: '500'
+                                    }}>
+                                      {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: false,
+                                })}
+                                    </div>
+                                  </div>
+                                )}
+                                <div style={{
+                                  flex: 1,
+                                  padding: '12px',
+                                  background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                  borderRadius: '8px',
+                                  border: '1px solid #86efac'
                                 }}>
-                                  ✅ Finalizado
-                                </div>
-                                <div style={{ 
-                                  fontSize: '0.9rem', 
-                                  color: '#15803d',
-                                  fontWeight: '500'
-                                }}>
+                                  <div style={{ 
+                                    fontSize: '0.85rem', 
+                                    fontWeight: '600', 
+                                    color: '#166534',
+                                    marginBottom: '4px'
+                                  }}>
+                                    ✅ Finalizado
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: '0.9rem', 
+                                    color: '#15803d',
+                                    fontWeight: '500'
+                                  }}>
                                   {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                                     year: 'numeric',
                                     month: '2-digit',
@@ -1782,6 +2688,7 @@ const AdminPanel = () => {
                                     minute: '2-digit',
                                     hour12: false,
                                   })}
+                                  </div>
                                 </div>
                               </div>
                             )}
@@ -1882,17 +2789,29 @@ const AdminPanel = () => {
                       </span>
                     </td>
                     <td>
-                      <button
-                        className="btn-secondary"
-                        style={{ marginRight: '8px', backgroundColor: '#4CAF50', color: 'white' }}
-                        onClick={() => {
-                          setTransportistaEditando(transportista);
-                          setTransportistaForm({ nombre: transportista.nombre });
-                          setShowTransportistaModal(true);
-                        }}
-                      >
-                        Editar
-                      </button>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button
+                          className="btn-secondary"
+                          style={{ 
+                            backgroundColor: '#2196F3', 
+                            color: 'white',
+                            padding: '6px 12px',
+                            fontSize: '13px',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold'
+                          }}
+                          onClick={() => {
+                            setTransportistaEditando(transportista);
+                            setTransportistaForm({ nombre: transportista.nombre });
+                            setShowTransportistaModal(true);
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
+                        >
+                          Editar
+                        </button>
                       {transportista.activo ? (
                         <button
                           className="btn-danger"
@@ -1929,6 +2848,7 @@ const AdminPanel = () => {
                           Activar
                         </button>
                       )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -3309,67 +4229,98 @@ const AdminPanel = () => {
       )}
 
       {/* Modal de Resumen */}
-      {showResumenModal && (
-        <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px', maxHeight: '80vh', overflow: 'auto' }}>
-            <h3>Resumen - {fechaResumen}</h3>
-            <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
-              Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
-            </div>
-            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Número de Planilla</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transporte</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Zona</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Cantidad</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Vuelta</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pedidosResumen.length === 0 ? (
-                    <tr>
-                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
-                        No hay planillas para este día
-                      </td>
-                    </tr>
-                  ) : (
-                    pedidosResumen.map((pedido) => (
-                      <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
-                          {pedido.numeroPlanilla}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.vueltaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin vuelta</span>}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="modal-actions" style={{ marginTop: '20px' }}>
-              <button
-                type="button"
-                onClick={() => setShowResumenModal(false)}
-                className="btn-secondary"
-              >
-                Cerrar
-              </button>
+      {showResumenModal && (() => {
+        // Agrupar pedidos por vuelta
+        const pedidosAgrupadosPorVuelta = pedidosResumen.reduce((acc, pedido) => {
+          const vueltaNombre = pedido.vueltaNombre || 'Sin vuelta';
+          if (!acc[vueltaNombre]) {
+            acc[vueltaNombre] = [];
+          }
+          acc[vueltaNombre].push(pedido);
+          return acc;
+        }, {});
+
+        // Ordenar las vueltas (Sin vuelta al final)
+        const vueltasOrdenadas = Object.keys(pedidosAgrupadosPorVuelta).sort((a, b) => {
+          if (a === 'Sin vuelta') return 1;
+          if (b === 'Sin vuelta') return -1;
+          return a.localeCompare(b);
+        });
+
+        return (
+          <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflow: 'auto' }}>
+              <h3>Resumen - {fechaResumen}</h3>
+              <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
+                Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
+              </div>
+              <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                {vueltasOrdenadas.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                    No hay planillas para este día
+                  </div>
+                ) : (
+                  vueltasOrdenadas.map((vueltaNombre, vueltaIndex) => (
+                    <div key={vueltaNombre} style={{ marginBottom: vueltaIndex < vueltasOrdenadas.length - 1 ? '30px' : '0' }}>
+                      {/* Encabezado de la vuelta */}
+                      <h4 style={{
+                        margin: '0 0 12px 0',
+                        padding: '12px 16px',
+                        backgroundColor: '#2196F3',
+                        color: 'white',
+                        borderRadius: '8px 8px 0 0',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      }}>
+                        {vueltaNombre}
+                      </h4>
+                      {/* Tabla de pedidos de esta vuelta */}
+                      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>N° Planilla</th>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Cantidad</th>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Zona</th>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Transporte</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
+                            <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
+                                {pedido.numeroPlanilla}
+                              </td>
+                              <td style={{ padding: '12px', color: '#666' }}>
+                                {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
+                              </td>
+                              <td style={{ padding: '12px', color: '#666' }}>
+                                {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
+                              </td>
+                              <td style={{ padding: '12px', color: '#666' }}>
+                                {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="modal-actions" style={{ marginTop: '20px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowResumenModal(false)}
+                  className="btn-secondary"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Componente Chat */}
       {showChat && (

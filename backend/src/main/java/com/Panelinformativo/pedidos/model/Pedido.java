@@ -64,6 +64,9 @@ public class Pedido {
     private LocalDateTime fechaCreacion = LocalDateTime.now();
 
     private LocalDateTime fechaActualizacion;
+    
+    @Column(nullable = true)
+    private LocalDateTime fechaPendienteCarga; // Fecha cuando pasó a PENDIENTE_CARGA
 
     @PreUpdate
     protected void onUpdate() {

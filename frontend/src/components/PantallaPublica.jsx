@@ -4,8 +4,10 @@ import { connectWebSocket, disconnectWebSocket } from '../services/websocketServ
 import './PantallaPublica.css';
 
 const PantallaPublica = () => {
-  const [pedidosPendientes, setPedidosPendientes] = useState([]);
-  const [pedidosEnProceso, setPedidosEnProceso] = useState([]);
+  const [pedidosPrioridadArmado, setPedidosPrioridadArmado] = useState([]);
+  const [pedidosEnPreparacion, setPedidosEnPreparacion] = useState([]);
+  const [pedidosControl, setPedidosControl] = useState([]);
+  const [pedidosPendienteCarga, setPedidosPendienteCarga] = useState([]);
   const [pedidosRealizados, setPedidosRealizados] = useState([]);
   const [error, setError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -16,8 +18,10 @@ const PantallaPublica = () => {
     cargarPedidos();
     const stompClient = connectWebSocket((message) => {
       if (message.tipo === 'eliminado') {
-        setPedidosPendientes((prev) => prev.filter((p) => p.id !== message.id));
-        setPedidosEnProceso((prev) => prev.filter((p) => p.id !== message.id));
+        setPedidosPrioridadArmado((prev) => prev.filter((p) => p.id !== message.id));
+        setPedidosEnPreparacion((prev) => prev.filter((p) => p.id !== message.id));
+        setPedidosControl((prev) => prev.filter((p) => p.id !== message.id));
+        setPedidosPendienteCarga((prev) => prev.filter((p) => p.id !== message.id));
       } else {
         cargarPedidos();
       }
@@ -120,18 +124,25 @@ const PantallaPublica = () => {
   const cargarPedidos = async () => {
     try {
       setError(null);
-      const [pendientes, enProceso, realizados] = await Promise.all([
+      const [pendientes, enPreparacion, realizados] = await Promise.all([
         pedidoService.obtenerPorEstado('PENDIENTE'),
         pedidoService.obtenerPorEstado('EN_PREPARACION'),
         pedidoService.obtenerPorEstado('REALIZADO'),
       ]);
-      // Ordenar pedidos pendientes por prioridad y fecha de carga
-      const pendientesOrdenados = ordenarPedidos([...(pendientes.data || [])]);
-      // También ordenar en proceso por prioridad y fecha de carga
-      const enProcesoOrdenados = ordenarPedidos([...(enProceso.data || [])]);
       
-      setPedidosPendientes(pendientesOrdenados);
-      setPedidosEnProceso(enProcesoOrdenados);
+      // Prioridad de armado: PENDIENTE ordenados por prioridad y fecha
+      const pendientesOrdenados = ordenarPedidos([...(pendientes.data || [])]);
+      
+      // Filtrar EN_PREPARACION por etapa
+      const enPreparacionData = enPreparacion.data || [];
+      const enPreparacionSinEtapa = enPreparacionData.filter(p => !p.etapaPreparacion);
+      const enControl = enPreparacionData.filter(p => p.etapaPreparacion === 'CONTROL');
+      const enPendienteCarga = enPreparacionData.filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA');
+      
+      setPedidosPrioridadArmado(pendientesOrdenados);
+      setPedidosEnPreparacion(enPreparacionSinEtapa);
+      setPedidosControl(enControl);
+      setPedidosPendienteCarga(enPendienteCarga);
       setPedidosRealizados(realizados.data || []);
     } catch (error) {
       console.error('Error al cargar pedidos:', error);
@@ -155,6 +166,12 @@ const PantallaPublica = () => {
   };
 
   const realizadosHoy = getRealizadosHoy();
+  
+  // Calcular total de pedidos activos (suma de las 4 columnas)
+  const totalPedidosActivos = pedidosPrioridadArmado.length + 
+                               pedidosEnPreparacion.length + 
+                               pedidosControl.length + 
+                               pedidosPendienteCarga.length;
 
   const getPrioridadColor = (prioridad) => {
     const colors = {
@@ -220,19 +237,47 @@ const PantallaPublica = () => {
       title={cursorVisible ? "Clic para entrar/salir de pantalla completa" : ""}
     >
       <header className="pantalla-header">
-        <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {/* Cuadro de hora en la parte superior izquierda */}
+        <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'stretch', justifyContent: 'space-between' }}>
+          {/* Contenedor del logo a la izquierda */}
+          <div style={{
+            backgroundColor: 'rgba(255, 255, 255, 0.15)',
+            padding: '18px 25px',
+            borderRadius: '12px',
+            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
+            backdropFilter: 'blur(10px)',
+            border: '2px solid rgba(255, 255, 255, 0.2)',
+            marginRight: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <img 
+              src="/logo-empresa.png" 
+              alt="Logo Empresa" 
+              style={{ 
+                height: 'clamp(50px, 6vw, 80px)',
+                maxWidth: '250px',
+                objectFit: 'contain',
+                filter: 'drop-shadow(2px 2px 4px rgba(0, 0, 0, 0.3))'
+              }} 
+            />
+          </div>
+          
+          {/* Cuadro de hora */}
           <div style={{
             backgroundColor: 'rgba(0, 0, 0, 0.4)',
-            padding: '12px 20px', /* Reducido para 14" */
+            padding: '18px 28px',
             borderRadius: '8px',
             boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
-            minWidth: '100px', /* Reducido */
+            minWidth: '140px',
             textAlign: 'center',
-            marginRight: '15px',
+            marginRight: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}>
             <div style={{
-              fontSize: 'clamp(1.8rem, 3vw, 2.2rem)', /* Responsive para hora */
+              fontSize: 'clamp(2.5rem, 4vw, 3.5rem)', /* Responsive para hora - aumentado */
               fontWeight: 'bold',
               textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)',
               lineHeight: '1',
@@ -245,19 +290,9 @@ const PantallaPublica = () => {
               })}
             </div>
           </div>
-          <div style={{ flex: 1, textAlign: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '15px', marginBottom: '8px' }}>
-              <img 
-                src="/logo-empresa.png" 
-                alt="Logo Empresa" 
-                style={{ 
-                  height: 'clamp(40px, 5vw, 60px)',
-                  maxWidth: '200px',
-                  objectFit: 'contain'
-                }} 
-              />
-              <h1 style={{ margin: 0 }}>PANEL CENTRAL</h1>
-            </div>
+          
+          <div style={{ flex: 1, textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+            <h1 style={{ margin: 0, marginBottom: '8px' }}>PANEL CENTRAL</h1>
             <div className="fecha-hora">
               {horaActual.toLocaleString('es-AR', {
                 weekday: 'long',
@@ -267,32 +302,62 @@ const PantallaPublica = () => {
               })}
             </div>
           </div>
-          {/* Contador de realizadas hoy */}
-          <div style={{
-            backgroundColor: 'rgba(76, 175, 80, 0.9)',
-            padding: '12px 18px', /* Reducido para 14" */
-            borderRadius: '8px',
-            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
-            minWidth: '120px', /* Reducido */
-            textAlign: 'center',
-            marginLeft: '15px',
-          }}>
+          {/* Contenedor de contadores */}
+          <div style={{ display: 'flex', gap: '20px', marginLeft: '15px' }}>
+            {/* Contador de total activos */}
             <div style={{
-              fontSize: 'clamp(0.75rem, 1.2vw, 0.9rem)', /* Responsive */
-              opacity: 0.95,
-              marginBottom: '6px',
-              textTransform: 'uppercase',
-              fontWeight: '600',
+              backgroundColor: 'rgba(76, 175, 80, 0.9)',
+              padding: '18px 24px',
+              borderRadius: '8px',
+              boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
+              minWidth: '160px',
+              textAlign: 'center',
             }}>
-              Realizadas Hoy
+              <div style={{
+                fontSize: 'clamp(1rem, 1.5vw, 1.3rem)', /* Aumentado */
+                opacity: 0.95,
+                marginBottom: '10px',
+                textTransform: 'uppercase',
+                fontWeight: '600',
+              }}>
+                Total Activos
+              </div>
+              <div style={{
+                fontSize: 'clamp(2.5rem, 4vw, 3.5rem)', /* Aumentado */
+                fontWeight: 'bold',
+                textShadow: '2px 2px 4px rgba(0, 0, 0, 0.3)',
+                lineHeight: '1',
+              }}>
+                {totalPedidosActivos}
+              </div>
             </div>
+            
+            {/* Contador de finalizados del día */}
             <div style={{
-              fontSize: 'clamp(1.8rem, 3vw, 2.2rem)', /* Responsive para contador */
-              fontWeight: 'bold',
-              textShadow: '2px 2px 4px rgba(0, 0, 0, 0.3)',
-              lineHeight: '1',
+              backgroundColor: 'rgba(33, 150, 243, 0.9)',
+              padding: '18px 24px',
+              borderRadius: '8px',
+              boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
+              minWidth: '160px',
+              textAlign: 'center',
             }}>
-              {realizadosHoy}
+              <div style={{
+                fontSize: 'clamp(1rem, 1.5vw, 1.3rem)', /* Aumentado */
+                opacity: 0.95,
+                marginBottom: '10px',
+                textTransform: 'uppercase',
+                fontWeight: '600',
+              }}>
+                Finalizados Hoy
+              </div>
+              <div style={{
+                fontSize: 'clamp(2.5rem, 4vw, 3.5rem)', /* Aumentado */
+                fontWeight: 'bold',
+                textShadow: '2px 2px 4px rgba(0, 0, 0, 0.3)',
+                lineHeight: '1',
+              }}>
+                {realizadosHoy}
+              </div>
             </div>
           </div>
         </div>
@@ -314,72 +379,202 @@ const PantallaPublica = () => {
       )}
 
       <div className="pantalla-content">
+        {/* Columna 1: Prioridad de Armado */}
         <div className="seccion-pedidos">
-          <div className="seccion-header pendiente">
-            <h2>PEDIDOS PENDIENTES</h2>
-            <span className="contador">{pedidosPendientes.length}</span>
+          <div className="seccion-header pendiente" style={{ minHeight: '70px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0, fontSize: 'clamp(1.3rem, 2.2vw, 1.8rem)', lineHeight: '1.2', fontWeight: 'bold' }}>PRIORIDAD DE ARMADO</h2>
+            <span className="contador">{pedidosPrioridadArmado.length}</span>
           </div>
-          <div className="pedidos-lista">
-            {pedidosPendientes.length > 0 ? (
-              pedidosPendientes.map((pedido, index) => (
+          <div className="pedidos-lista" style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '8px',
+            maxHeight: 'calc(100vh - 250px)',
+            overflowY: 'auto'
+          }}>
+            {pedidosPrioridadArmado.length > 0 ? (
+              pedidosPrioridadArmado.map((pedido, index) => (
                 <div
                   key={pedido.id}
                   className="pedido-item"
-                  style={{ animationDelay: `${index * 0.1}s` }}
+                  style={{ 
+                    animationDelay: `${index * 0.05}s`,
+                    padding: '10px 15px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                    borderRadius: '8px',
+                    border: `4px solid ${getPrioridadColor(pedido.prioridad)}`,
+                    textAlign: 'center'
+                  }}
                 >
-                  <div className="pedido-numero">
-                    <span className="numero-planilla">
-                      {pedido.numeroPlanilla ? pedido.numeroPlanilla.slice(-4) : ''}
-                    </span>
-                  </div>
-                  <div className="pedido-details">
-                    <div className="transportista">
-                      {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
-                    </div>
-                    <div className="grupo">
-                      {pedido.grupoNombre ? `Equipo: ${pedido.grupoNombre}` : 'Sin asignar'}
-                    </div>
-                  </div>
-                  <div className="prioridad-badge-large" style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}>
-                    {pedido.prioridad}
+                  <div style={{ 
+                    fontSize: 'clamp(2.4rem, 3.5vw, 3rem)', 
+                    fontWeight: 'bold',
+                    color: '#fff',
+                    textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)'
+                  }}>
+                    {pedido.numeroPlanilla}
                   </div>
                 </div>
               ))
             ) : (
-              <div className="sin-pedidos">No hay pedidos pendientes</div>
+              <div className="sin-pedidos" style={{ 
+                padding: '20px', 
+                textAlign: 'center', 
+                color: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '1.1rem'
+              }}>
+                No hay pedidos
+              </div>
             )}
           </div>
         </div>
 
+        {/* Columna 2: En Preparación */}
         <div className="seccion-pedidos">
-          <div className="seccion-header proceso">
-            <h2>PEDIDOS EN PROCESO</h2>
-            <span className="contador">{pedidosEnProceso.length}</span>
+          <div className="seccion-header proceso" style={{ minHeight: '70px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0, fontSize: 'clamp(1.3rem, 2.2vw, 1.8rem)', lineHeight: '1.2', fontWeight: 'bold' }}>EN PREPARACIÓN</h2>
+            <span className="contador">{pedidosEnPreparacion.length}</span>
           </div>
-          <div className="pedidos-lista">
-            {pedidosEnProceso.length > 0 ? (
-              pedidosEnProceso.map((pedido, index) => (
+          <div className="pedidos-lista" style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '8px',
+            maxHeight: 'calc(100vh - 250px)',
+            overflowY: 'auto'
+          }}>
+            {pedidosEnPreparacion.length > 0 ? (
+              pedidosEnPreparacion.map((pedido, index) => (
                 <div
                   key={pedido.id}
                   className="pedido-item proceso"
-                  style={{ animationDelay: `${index * 0.1}s` }}
+                  style={{ 
+                    animationDelay: `${index * 0.05}s`,
+                    padding: '10px 15px',
+                    backgroundColor: 'rgba(33, 150, 243, 0.2)',
+                    borderRadius: '8px',
+                    border: '2px solid #2196F3',
+                    textAlign: 'center'
+                  }}
                 >
-                  <div className="pedido-numero">
-                    <span className="numero-planilla">
-                      {pedido.numeroPlanilla ? pedido.numeroPlanilla.slice(-4) : ''}
-                    </span>
-                  </div>
-                  <div className="pedido-details">
-                    <div className="transportista">{pedido.transportista}</div>
-                    <div className="grupo">Equipo: {pedido.grupoNombre || 'Sin asignar'}</div>
-                  </div>
-                  <div className="prioridad-badge-large" style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}>
-                    {pedido.prioridad}
+                  <div style={{ 
+                    fontSize: 'clamp(2.4rem, 3.5vw, 3rem)', 
+                    fontWeight: 'bold',
+                    color: '#fff',
+                    textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)'
+                  }}>
+                    {pedido.numeroPlanilla}
                   </div>
                 </div>
               ))
             ) : (
-              <div className="sin-pedidos">No hay pedidos en proceso</div>
+              <div className="sin-pedidos" style={{ 
+                padding: '20px', 
+                textAlign: 'center', 
+                color: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '1.1rem'
+              }}>
+                No hay pedidos
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Columna 3: Control */}
+        <div className="seccion-pedidos">
+          <div className="seccion-header proceso" style={{ minHeight: '70px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0, fontSize: 'clamp(1.3rem, 2.2vw, 1.8rem)', lineHeight: '1.2', fontWeight: 'bold' }}>CONTROL</h2>
+            <span className="contador">{pedidosControl.length}</span>
+          </div>
+          <div className="pedidos-lista" style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '8px',
+            maxHeight: 'calc(100vh - 250px)',
+            overflowY: 'auto'
+          }}>
+            {pedidosControl.length > 0 ? (
+              pedidosControl.map((pedido, index) => (
+                <div
+                  key={pedido.id}
+                  className="pedido-item proceso"
+                  style={{ 
+                    animationDelay: `${index * 0.05}s`,
+                    padding: '10px 15px',
+                    backgroundColor: 'rgba(33, 150, 243, 0.2)',
+                    borderRadius: '8px',
+                    border: '2px solid #2196F3',
+                    textAlign: 'center'
+                  }}
+                >
+                  <div style={{ 
+                    fontSize: 'clamp(2.4rem, 3.5vw, 3rem)', 
+                    fontWeight: 'bold',
+                    color: '#fff',
+                    textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)'
+                  }}>
+                    {pedido.numeroPlanilla}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="sin-pedidos" style={{ 
+                padding: '20px', 
+                textAlign: 'center', 
+                color: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '1.1rem'
+              }}>
+                No hay pedidos
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Columna 4: Pendiente de Carga */}
+        <div className="seccion-pedidos">
+          <div className="seccion-header pendiente-carga" style={{ minHeight: '70px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0, fontSize: 'clamp(1.3rem, 2.2vw, 1.8rem)', lineHeight: '1.2', fontWeight: 'bold' }}>PENDIENTE DE CARGA</h2>
+            <span className="contador">{pedidosPendienteCarga.length}</span>
+          </div>
+          <div className="pedidos-lista" style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '8px',
+            maxHeight: 'calc(100vh - 250px)',
+            overflowY: 'auto'
+          }}>
+            {pedidosPendienteCarga.length > 0 ? (
+              pedidosPendienteCarga.map((pedido, index) => (
+                <div
+                  key={pedido.id}
+                  className="pedido-item proceso"
+                  style={{ 
+                    animationDelay: `${index * 0.05}s`,
+                    padding: '10px 15px',
+                    backgroundColor: 'rgba(255, 152, 0, 0.2)',
+                    borderRadius: '8px',
+                    border: '2px solid #FF9800',
+                    textAlign: 'center'
+                  }}
+                >
+                  <div style={{ 
+                    fontSize: 'clamp(2.4rem, 3.5vw, 3rem)', 
+                    fontWeight: 'bold',
+                    color: '#fff',
+                    textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)'
+                  }}>
+                    {pedido.numeroPlanilla}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="sin-pedidos" style={{ 
+                padding: '20px', 
+                textAlign: 'center', 
+                color: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '1.1rem'
+              }}>
+                No hay pedidos
+              </div>
             )}
           </div>
         </div>

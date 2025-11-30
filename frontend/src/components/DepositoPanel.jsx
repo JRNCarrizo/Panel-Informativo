@@ -84,6 +84,13 @@ const DepositoPanel = () => {
   const [botonSeleccionadoEnRegistro, setBotonSeleccionadoEnRegistro] = useState({});
   // Refs para los botones de sub-pestañas (filtros de etapa)
   const subPestanaButtonRefs = useRef([]);
+  // Estados para navegación en "Realizados"
+  const [diaSeleccionadoIndex, setDiaSeleccionadoIndex] = useState(-1);
+  const [enModoNavegacionDias, setEnModoNavegacionDias] = useState(false);
+  const [enModoNavegacionRegistrosRealizados, setEnModoNavegacionRegistrosRealizados] = useState(false);
+  const [pedidoSeleccionadoIndexRealizados, setPedidoSeleccionadoIndexRealizados] = useState(-1);
+  // Refs para los botones de días en "Realizados"
+  const diaButtonRefs = useRef([]);
 
   // Cargar datos y conectar WebSocket, similar a AdminPanel
   useEffect(() => {
@@ -796,6 +803,169 @@ const DepositoPanel = () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [filtroEstado, filtroEtapaPreparacion, showGrupoModal, showResumenModal, pedidos, pedidoSeleccionadoIndex, enModoNavegacionRegistros, enModoNavegacionSubPestanas, subPestanaSeleccionadaIndex, enModoNavegacionBotonesRegistro, botonSeleccionadoEnPreparacion, botonSeleccionadoEnRegistro]);
+
+  // Navegación con teclado para la sección "Realizados"
+  useEffect(() => {
+    if (filtroEstado !== 'REALIZADO') {
+      return;
+    }
+
+    const handleKeyDown = (event) => {
+      // No navegar si hay un modal abierto
+      if (showGrupoModal || showResumenModal) {
+        return;
+      }
+
+      const focusedElement = document.activeElement;
+      const isInputFocused = focusedElement && (
+        focusedElement.tagName === 'INPUT' || 
+        focusedElement.tagName === 'TEXTAREA' || 
+        focusedElement.tagName === 'SELECT' ||
+        focusedElement.isContentEditable
+      );
+
+      // Si estamos escribiendo en un input, no navegar
+      if (isInputFocused) {
+        return;
+      }
+
+      const pedidosAgrupados = getPedidosAgrupadosPorDia();
+      if (!pedidosAgrupados || pedidosAgrupados.length === 0) {
+        return;
+      }
+
+      // Si estamos en la pestaña principal y presionamos flecha abajo, entrar en modo navegación de días
+      if (!enModoNavegacionDias && !enModoNavegacionRegistrosRealizados && event.key === 'ArrowDown') {
+        event.preventDefault();
+        setEnModoNavegacionDias(true);
+        setDiaSeleccionadoIndex(0);
+        const firstDiaButton = diaButtonRefs.current[0];
+        if (firstDiaButton) {
+          firstDiaButton.focus();
+        }
+        return;
+      }
+
+      // Si estamos navegando días
+      if (enModoNavegacionDias && !enModoNavegacionRegistrosRealizados) {
+        // Navegación arriba/abajo entre días
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowUp'
+            ? (diaSeleccionadoIndex > 0 ? diaSeleccionadoIndex - 1 : pedidosAgrupados.length - 1)
+            : (diaSeleccionadoIndex < pedidosAgrupados.length - 1 ? diaSeleccionadoIndex + 1 : 0);
+          setDiaSeleccionadoIndex(nuevoIndex);
+          const diaButton = diaButtonRefs.current[nuevoIndex];
+          if (diaButton) {
+            diaButton.focus();
+          }
+          return;
+        }
+
+        // Enter para expandir/colapsar el día seleccionado
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          const dia = pedidosAgrupados[diaSeleccionadoIndex];
+          if (dia) {
+            toggleDia(dia.fecha);
+            // Si el día se expande y tiene pedidos, entrar en modo navegación de registros
+            if (!diasExpandidos.has(dia.fecha) && dia.pedidos.length > 0) {
+              setEnModoNavegacionRegistrosRealizados(true);
+              setPedidoSeleccionadoIndexRealizados(0);
+              setEnModoNavegacionDias(false);
+              // Enfocar el primer registro del día expandido
+              setTimeout(() => {
+                const firstPedido = dia.pedidos[0];
+                if (firstPedido) {
+                  const pedidoCard = document.querySelector(`[data-pedido-id-realizado="${firstPedido.id}"]`);
+                  if (pedidoCard) {
+                    pedidoCard.focus();
+                  }
+                }
+              }, 100);
+            }
+          }
+          return;
+        }
+
+        // Si presionamos flecha arriba desde el primer día, salir del modo navegación
+        if (event.key === 'ArrowUp' && diaSeleccionadoIndex === 0) {
+          event.preventDefault();
+          setEnModoNavegacionDias(false);
+          setDiaSeleccionadoIndex(-1);
+          const tabButton = document.querySelector('.filtros-buttons button.active');
+          if (tabButton) {
+            tabButton.focus();
+          }
+          return;
+        }
+      }
+
+      // Si estamos navegando registros de un día expandido
+      if (enModoNavegacionRegistrosRealizados && pedidoSeleccionadoIndexRealizados >= 0) {
+        const dia = pedidosAgrupados[diaSeleccionadoIndex];
+        if (!dia || !diasExpandidos.has(dia.fecha)) {
+          return;
+        }
+
+        const pedidosDelDia = dia.pedidos;
+
+        // Si estamos en el primer registro y presionamos flecha arriba, volver a días
+        if (event.key === 'ArrowUp' && pedidoSeleccionadoIndexRealizados === 0) {
+          event.preventDefault();
+          setEnModoNavegacionRegistrosRealizados(false);
+          setPedidoSeleccionadoIndexRealizados(-1);
+          setEnModoNavegacionDias(true);
+          const diaButton = diaButtonRefs.current[diaSeleccionadoIndex];
+          if (diaButton) {
+            diaButton.focus();
+          }
+          return;
+        }
+
+        // Navegación arriba/abajo entre registros
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowUp'
+            ? (pedidoSeleccionadoIndexRealizados > 0 ? pedidoSeleccionadoIndexRealizados - 1 : pedidosDelDia.length - 1)
+            : (pedidoSeleccionadoIndexRealizados < pedidosDelDia.length - 1 ? pedidoSeleccionadoIndexRealizados + 1 : 0);
+          setPedidoSeleccionadoIndexRealizados(nuevoIndex);
+          
+          const pedido = pedidosDelDia[nuevoIndex];
+          if (pedido) {
+            const pedidoCard = document.querySelector(`[data-pedido-id-realizado="${pedido.id}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+          }
+          return;
+        }
+
+        // Navegación izquierda/derecha entre registros (si hay más de uno)
+        if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosDelDia.length > 1) {
+          event.preventDefault();
+          const nuevoIndex = event.key === 'ArrowLeft'
+            ? (pedidoSeleccionadoIndexRealizados > 0 ? pedidoSeleccionadoIndexRealizados - 1 : pedidosDelDia.length - 1)
+            : (pedidoSeleccionadoIndexRealizados < pedidosDelDia.length - 1 ? pedidoSeleccionadoIndexRealizados + 1 : 0);
+          setPedidoSeleccionadoIndexRealizados(nuevoIndex);
+          
+          const pedido = pedidosDelDia[nuevoIndex];
+          if (pedido) {
+            const pedidoCard = document.querySelector(`[data-pedido-id-realizado="${pedido.id}"]`);
+            if (pedidoCard) {
+              pedidoCard.focus();
+            }
+          }
+          return;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [filtroEstado, enModoNavegacionDias, diaSeleccionadoIndex, enModoNavegacionRegistrosRealizados, pedidoSeleccionadoIndexRealizados, diasExpandidos, textoBusqueda, showGrupoModal, showResumenModal]);
 
   // Agregar listener para abrir modal de crear equipo con Enter cuando esté en la sección de equipos
   useEffect(() => {
@@ -1979,7 +2149,7 @@ const DepositoPanel = () => {
 
         {filtroEstado === 'REALIZADO' && pedidosAgrupadosPorDia && pedidosAgrupadosPorDia.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-            {pedidosAgrupadosPorDia.map((dia) => (
+            {pedidosAgrupadosPorDia.map((dia, index) => (
               <div
                 key={dia.fecha}
                 style={{
@@ -2094,8 +2264,22 @@ const DepositoPanel = () => {
                         return matchPlanilla || matchTransporte || matchZona || matchVuelta;
                       }
                       return true;
-                    }).map((pedido) => (
-                      <div key={pedido.id} className="pedido-card deposito-pedido-card">
+                    }).map((pedido, pedidoIndex) => (
+                      <div 
+                        key={pedido.id} 
+                        className="pedido-card deposito-pedido-card"
+                        data-pedido-id-realizado={pedido.id}
+                        tabIndex={0}
+                        style={{
+                          outline: (diaSeleccionadoIndex === index && enModoNavegacionRegistrosRealizados && pedidoSeleccionadoIndexRealizados === pedidoIndex) ? '3px solid #0f766e' : 'none',
+                          outlineOffset: '-2px',
+                        }}
+                        onFocus={(e) => {
+                          if (diaSeleccionadoIndex === index && enModoNavegacionRegistrosRealizados) {
+                            setPedidoSeleccionadoIndexRealizados(pedidoIndex);
+                          }
+                        }}
+                      >
                         <div className="pedido-header">
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                             <div style={{
@@ -2115,7 +2299,7 @@ const DepositoPanel = () => {
                             </div>
                             <div>
                               <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
-                                Planilla #{pedido.numeroPlanilla}
+                                {pedido.numeroPlanilla}
                               </h3>
                               <div style={{ 
                                 fontSize: '0.85rem', 
@@ -2203,25 +2387,26 @@ const DepositoPanel = () => {
                             </div>
                           </div>
                           
-                          {pedido.fechaActualizacion && (
+                          {pedido.etapaPreparacion === 'PENDIENTE_CARGA' && pedido.fechaActualizacion && (
                             <div style={{
                               padding: '12px',
-                              background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                              background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
                               borderRadius: '8px',
-                              border: '1px solid #86efac',
-                              marginTop: '8px'
+                              border: '1px solid #ffb74d',
+                              marginTop: '8px',
+                              marginBottom: '8px'
                             }}>
                               <div style={{ 
                                 fontSize: '0.85rem', 
                                 fontWeight: '600', 
-                                color: '#166534',
+                                color: '#E65100',
                                 marginBottom: '4px'
                               }}>
-                                ✅ Finalizado
+                                📦 Pendiente de Carga
                               </div>
                               <div style={{ 
                                 fontSize: '0.9rem', 
-                                color: '#15803d',
+                                color: '#F57C00',
                                 fontWeight: '500'
                               }}>
                                 {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
@@ -2232,6 +2417,77 @@ const DepositoPanel = () => {
                                   minute: '2-digit',
                                   hour12: false,
                                 })}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
+                            <div style={{
+                              display: 'flex',
+                              gap: '12px',
+                              marginTop: '8px'
+                            }}>
+                              {pedido.fechaPendienteCarga && (
+                                <div style={{
+                                  flex: 1,
+                                  padding: '12px',
+                                  background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                                  borderRadius: '8px',
+                                  border: '1px solid #ffb74d'
+                                }}>
+                                  <div style={{ 
+                                    fontSize: '0.85rem', 
+                                    fontWeight: '600', 
+                                    color: '#E65100',
+                                    marginBottom: '4px'
+                                  }}>
+                                    📦 Pend. de Carga
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: '0.9rem', 
+                                    color: '#F57C00',
+                                    fontWeight: '500'
+                                  }}>
+                                    {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
+                                      year: 'numeric',
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: false,
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                              <div style={{
+                                flex: 1,
+                                padding: '12px',
+                                background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                borderRadius: '8px',
+                                border: '1px solid #86efac'
+                              }}>
+                                <div style={{ 
+                                  fontSize: '0.85rem', 
+                                  fontWeight: '600', 
+                                  color: '#166534',
+                                  marginBottom: '4px'
+                                }}>
+                                  ✅ Finalizado
+                                </div>
+                                <div style={{ 
+                                  fontSize: '0.9rem', 
+                                  color: '#15803d',
+                                  fontWeight: '500'
+                                }}>
+                                {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
+                                  year: 'numeric',
+                                  month: '2-digit',
+                                  day: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: false,
+                                })}
+                                </div>
                               </div>
                             </div>
                           )}
@@ -2722,7 +2978,7 @@ const DepositoPanel = () => {
                   </div>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
-                      Planilla #{pedido.numeroPlanilla}
+                      {pedido.numeroPlanilla}
                     </h3>
                     <div style={{ 
                       fontSize: '0.85rem', 
@@ -2845,93 +3101,92 @@ const DepositoPanel = () => {
               </div>
               {pedido.estado !== 'REALIZADO' && (
                 <div className="pedido-actions">
-                  {pedido.estado === 'PENDIENTE' && (
-                    <div className="action-group" style={{ position: 'relative' }}>
-                      <label>Asignar Equipo:</label>
-                      <select
-                        ref={(el) => {
-                          if (el) equipoSelectRefs.current[pedido.id] = el;
-                        }}
-                        data-pedido-id={pedido.id}
-                        value={pedido.grupoId || ''}
-                        onChange={(e) => {
-                          if (e.target.value === 'sin-asignar') {
-                            handleQuitarGrupo(pedido.id);
-                          } else if (e.target.value) {
-                            handleAsignarGrupo(pedido.id, parseInt(e.target.value));
-                          }
-                          setShowEquipoTooltip(false);
-                        }}
-                        onMouseDown={(e) => {
-                          const equiposActivos = grupos.filter(g => g.activo !== false);
-                          if (equiposActivos.length === 0) {
-                            e.preventDefault();
-                            setEquipoTooltipPedidoId(pedido.id);
-                            setShowEquipoTooltip(true);
-                            // Cerrar el tooltip después de 5 segundos
-                            setTimeout(() => setShowEquipoTooltip(false), 5000);
-                          }
-                        }}
-                        onFocus={(e) => {
-                          const equiposActivos = grupos.filter(g => g.activo !== false);
-                          if (equiposActivos.length === 0) {
-                            e.target.blur();
-                            setEquipoTooltipPedidoId(pedido.id);
-                            setShowEquipoTooltip(true);
-                            // Cerrar el tooltip después de 5 segundos
-                            setTimeout(() => setShowEquipoTooltip(false), 5000);
-                          }
-                        }}
-                        onBlur={() => {
-                          // Cerrar el tooltip después de un pequeño delay para permitir que se vea
-                          setTimeout(() => setShowEquipoTooltip(false), 200);
-                        }}
-                      >
-                        <option value="">Seleccionar...</option>
-                        {grupos.map((grupo) => (
-                          <option key={grupo.id} value={grupo.id}>
-                            {grupo.nombre}
-                          </option>
-                        ))}
-                        <option value="sin-asignar">Sin asignar</option>
-                      </select>
-                      {showEquipoTooltip && equipoTooltipPedidoId === pedido.id && grupos.filter(g => g.activo !== false).length === 0 && (
+                  {/* Asignar Equipo disponible en todas las etapas hasta finalizar */}
+                  <div className="action-group" style={{ position: 'relative' }}>
+                    <label>Asignar Equipo:</label>
+                    <select
+                      ref={(el) => {
+                        if (el) equipoSelectRefs.current[pedido.id] = el;
+                      }}
+                      data-pedido-id={pedido.id}
+                      value={pedido.grupoId || ''}
+                      onChange={(e) => {
+                        if (e.target.value === 'sin-asignar') {
+                          handleQuitarGrupo(pedido.id);
+                        } else if (e.target.value) {
+                          handleAsignarGrupo(pedido.id, parseInt(e.target.value));
+                        }
+                        setShowEquipoTooltip(false);
+                      }}
+                      onMouseDown={(e) => {
+                        const equiposActivos = grupos.filter(g => g.activo !== false);
+                        if (equiposActivos.length === 0) {
+                          e.preventDefault();
+                          setEquipoTooltipPedidoId(pedido.id);
+                          setShowEquipoTooltip(true);
+                          // Cerrar el tooltip después de 5 segundos
+                          setTimeout(() => setShowEquipoTooltip(false), 5000);
+                        }
+                      }}
+                      onFocus={(e) => {
+                        const equiposActivos = grupos.filter(g => g.activo !== false);
+                        if (equiposActivos.length === 0) {
+                          e.target.blur();
+                          setEquipoTooltipPedidoId(pedido.id);
+                          setShowEquipoTooltip(true);
+                          // Cerrar el tooltip después de 5 segundos
+                          setTimeout(() => setShowEquipoTooltip(false), 5000);
+                        }
+                      }}
+                      onBlur={() => {
+                        // Cerrar el tooltip después de un pequeño delay para permitir que se vea
+                        setTimeout(() => setShowEquipoTooltip(false), 200);
+                      }}
+                    >
+                      <option value="">Seleccionar...</option>
+                      {grupos.map((grupo) => (
+                        <option key={grupo.id} value={grupo.id}>
+                          {grupo.nombre}
+                        </option>
+                      ))}
+                      <option value="sin-asignar">Sin asignar</option>
+                    </select>
+                    {showEquipoTooltip && equipoTooltipPedidoId === pedido.id && grupos.filter(g => g.activo !== false).length === 0 && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        marginTop: '8px',
+                        padding: '12px 16px',
+                        backgroundColor: '#0f766e',
+                        color: 'white',
+                        borderRadius: '8px',
+                        fontSize: '0.9rem',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        zIndex: 1000,
+                        maxWidth: '300px',
+                        lineHeight: '1.5',
+                        animation: 'fadeIn 0.3s ease-in'
+                      }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
+                          ℹ️ No hay equipos registrados
+                        </div>
+                        <div>
+                          Para asignar un equipo, primero debes ir a la sección <strong>"Equipos"</strong> y crear al menos un equipo.
+                        </div>
                         <div style={{
                           position: 'absolute',
-                          top: '100%',
-                          left: 0,
-                          marginTop: '8px',
-                          padding: '12px 16px',
-                          backgroundColor: '#0f766e',
-                          color: 'white',
-                          borderRadius: '8px',
-                          fontSize: '0.9rem',
-                          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                          zIndex: 1000,
-                          maxWidth: '300px',
-                          lineHeight: '1.5',
-                          animation: 'fadeIn 0.3s ease-in'
-                        }}>
-                          <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
-                            ℹ️ No hay equipos registrados
-                          </div>
-                          <div>
-                            Para asignar un equipo, primero debes ir a la sección <strong>"Equipos"</strong> y crear al menos un equipo.
-                          </div>
-                          <div style={{
-                            position: 'absolute',
-                            bottom: '100%',
-                            left: '20px',
-                            width: 0,
-                            height: 0,
-                            borderLeft: '8px solid transparent',
-                            borderRight: '8px solid transparent',
-                            borderBottom: '8px solid #0f766e'
-                          }}></div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                          bottom: '100%',
+                          left: '20px',
+                          width: 0,
+                          height: 0,
+                          borderLeft: '8px solid transparent',
+                          borderRight: '8px solid transparent',
+                          borderBottom: '8px solid #0f766e'
+                        }}></div>
+                      </div>
+                    )}
+                  </div>
                   <div className="action-group">
                     {pedido.estado === 'PENDIENTE' && (
                       <button
@@ -3267,67 +3522,98 @@ const DepositoPanel = () => {
       )}
 
       {/* Modal de Resumen */}
-      {showResumenModal && (
-        <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px', maxHeight: '80vh', overflow: 'auto' }}>
-            <h3>Resumen - {fechaResumen}</h3>
-            <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
-              Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
-            </div>
-            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Número de Planilla</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Transporte</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Zona</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Cantidad</th>
-                    <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Vuelta</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pedidosResumen.length === 0 ? (
-                    <tr>
-                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
-                        No hay planillas para este día
-                      </td>
-                    </tr>
-                  ) : (
-                    pedidosResumen.map((pedido) => (
-                      <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
-                          {pedido.numeroPlanilla}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                          {pedido.vueltaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin vuelta</span>}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="modal-actions" style={{ marginTop: '20px' }}>
-              <button
-                type="button"
-                onClick={() => setShowResumenModal(false)}
-                className="btn-secondary"
-              >
-                Cerrar
-              </button>
+      {showResumenModal && (() => {
+        // Agrupar pedidos por vuelta
+        const pedidosAgrupadosPorVuelta = pedidosResumen.reduce((acc, pedido) => {
+          const vueltaNombre = pedido.vueltaNombre || 'Sin vuelta';
+          if (!acc[vueltaNombre]) {
+            acc[vueltaNombre] = [];
+          }
+          acc[vueltaNombre].push(pedido);
+          return acc;
+        }, {});
+
+        // Ordenar las vueltas (Sin vuelta al final)
+        const vueltasOrdenadas = Object.keys(pedidosAgrupadosPorVuelta).sort((a, b) => {
+          if (a === 'Sin vuelta') return 1;
+          if (b === 'Sin vuelta') return -1;
+          return a.localeCompare(b);
+        });
+
+        return (
+          <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflow: 'auto' }}>
+              <h3>Resumen - {fechaResumen}</h3>
+              <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
+                Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
+              </div>
+              <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                {vueltasOrdenadas.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                    No hay planillas para este día
+                  </div>
+                ) : (
+                  vueltasOrdenadas.map((vueltaNombre, vueltaIndex) => (
+                    <div key={vueltaNombre} style={{ marginBottom: vueltaIndex < vueltasOrdenadas.length - 1 ? '30px' : '0' }}>
+                      {/* Encabezado de la vuelta */}
+                      <h4 style={{
+                        margin: '0 0 12px 0',
+                        padding: '12px 16px',
+                        backgroundColor: '#0f766e',
+                        color: 'white',
+                        borderRadius: '8px 8px 0 0',
+                        fontSize: '1.1rem',
+                        fontWeight: '600',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      }}>
+                        {vueltaNombre}
+                      </h4>
+                      {/* Tabla de pedidos de esta vuelta */}
+                      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>N° Planilla</th>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Cantidad</th>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Zona</th>
+                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Transporte</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
+                            <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
+                                {pedido.numeroPlanilla}
+                              </td>
+                              <td style={{ padding: '12px', color: '#666' }}>
+                                {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
+                              </td>
+                              <td style={{ padding: '12px', color: '#666' }}>
+                                {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
+                              </td>
+                              <td style={{ padding: '12px', color: '#666' }}>
+                                {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="modal-actions" style={{ marginTop: '20px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowResumenModal(false)}
+                  className="btn-secondary"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {/* Componente Chat */}
       {showChat && (
         <Chat 

@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -110,6 +111,10 @@ public class PedidoService {
         // Esto asegura que cuando vuelva a EN_PREPARACION, tenga que pasar por todas las etapas nuevamente
         if (nuevoEstado == Pedido.EstadoPedido.REALIZADO || nuevoEstado == Pedido.EstadoPedido.PENDIENTE) {
             pedido.setEtapaPreparacion(null);
+            // Si vuelve a PENDIENTE, limpiar también la fecha de pendiente de carga
+            if (nuevoEstado == Pedido.EstadoPedido.PENDIENTE) {
+                pedido.setFechaPendienteCarga(null);
+            }
         }
         pedido = pedidoRepository.save(pedido);
         return convertirADTO(pedido);
@@ -129,6 +134,7 @@ public class PedidoService {
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.CONTROL);
         } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.CONTROL) {
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.PENDIENTE_CARGA);
+            pedido.setFechaPendienteCarga(LocalDateTime.now()); // Guardar fecha cuando pasa a PENDIENTE_CARGA
         } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.PENDIENTE_CARGA) {
             pedido.setEstado(Pedido.EstadoPedido.REALIZADO);
             pedido.setEtapaPreparacion(null);
@@ -225,6 +231,7 @@ public class PedidoService {
         dto.setUsuarioCreadorNombre(pedido.getUsuarioCreador().getNombreCompleto());
         dto.setFechaCreacion(pedido.getFechaCreacion());
         dto.setFechaActualizacion(pedido.getFechaActualizacion());
+        dto.setFechaPendienteCarga(pedido.getFechaPendienteCarga());
 
         if (pedido.getTransportista() != null) {
             dto.setTransportistaId(pedido.getTransportista().getId());

@@ -29,5 +29,6 @@ public class PedidoDTO {
     private String usuarioCreadorNombre;
     private LocalDateTime fechaCreacion;
     private LocalDateTime fechaActualizacion;
+    private LocalDateTime fechaPendienteCarga;
 }
 
