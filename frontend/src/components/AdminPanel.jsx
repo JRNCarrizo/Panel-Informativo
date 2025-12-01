@@ -521,12 +521,12 @@ const AdminPanel = () => {
 
       // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros ni de sub-pestañas)
       if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros && !enModoNavegacionDias && !enModoNavegacionRegistrosRealizados && !isInputFocused) {
-        if (event.key === 'ArrowLeft' && currentIndex > 0) {
-          event.preventDefault();
-          setActiveTab(tabs[currentIndex - 1]);
-        } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
-          event.preventDefault();
-          setActiveTab(tabs[currentIndex + 1]);
+      if (event.key === 'ArrowLeft' && currentIndex > 0) {
+        event.preventDefault();
+        setActiveTab(tabs[currentIndex - 1]);
+      } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
+        event.preventDefault();
+        setActiveTab(tabs[currentIndex + 1]);
         }
       }
     };
@@ -604,7 +604,9 @@ const AdminPanel = () => {
           const nuevoIndex = event.key === 'ArrowLeft'
             ? (subPestanaSeleccionadaIndex > 0 ? subPestanaSeleccionadaIndex - 1 : subPestanas.length - 1)
             : (subPestanaSeleccionadaIndex < subPestanas.length - 1 ? subPestanaSeleccionadaIndex + 1 : 0);
+          const nuevoFiltro = subPestanas[nuevoIndex];
           setSubPestanaSeleccionadaIndex(nuevoIndex);
+          setFiltroEtapaPreparacion(nuevoFiltro); // Actualizar el filtro para mantener consistencia
           const subButton = subPestanaButtonRefs.current[nuevoIndex];
           if (subButton) {
             subButton.focus();
@@ -1129,7 +1131,7 @@ const AdminPanel = () => {
   // Usar useMemo para estabilizar pedidosAgrupadosPorDia
   const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [activeTab, pedidos, textoBusqueda]);
   const pedidosPorDia = useMemo(() => getPedidosPorDia(), [activeTab, pedidos]);
-  
+
   // Estabilizar la longitud para evitar cambios en el array de dependencias
   const pedidosAgrupadosPorDiaLength = pedidosAgrupadosPorDia?.length ?? 0;
 
@@ -1546,98 +1548,100 @@ const AdminPanel = () => {
                 color: '#1e293b',
                 letterSpacing: '-0.02em'
               }}>
-                Planillas Pendientes
+                Pendientes
               </h2>
             </div>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              flex: '0 0 400px',
-              position: 'relative'
-            }}>
-              <span style={{ fontSize: '1.2rem' }}>🔍</span>
-              <input
-                type="text"
-                data-search-input="true"
-                placeholder="Buscar por planilla, transporte, zona, vuelta..."
-                value={textoBusqueda}
-                onChange={(e) => setTextoBusqueda(e.target.value)}
-                onKeyDown={(e) => {
-                  // Detener la propagación para que los listeners globales no interfieran
-                  e.stopPropagation();
-                }}
-                onKeyPress={(e) => {
-                  // Detener la propagación para que los listeners globales no interfieran
-                  e.stopPropagation();
-                }}
-                style={{
-                  flex: 1,
-                  padding: '10px 15px',
-                  border: '2px solid #e0e0e0',
-                  borderRadius: '8px',
-                  fontSize: '0.95rem',
-                  outline: 'none',
-                  transition: 'all 0.2s',
-                }}
-                onFocus={(e) => {
-                  e.target.style.borderColor = '#2196F3';
-                  e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = '#e0e0e0';
-                  e.target.style.boxShadow = 'none';
-                }}
-              />
-              {textoBusqueda && (
-                <button
-                  onClick={() => setTextoBusqueda('')}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                flex: '0 0 400px',
+                position: 'relative'
+              }}>
+                <span style={{ fontSize: '1.2rem' }}>🔍</span>
+                <input
+                  type="text"
+                  data-search-input="true"
+                  placeholder="Buscar por planilla, transporte, zona, vuelta..."
+                  value={textoBusqueda}
+                  onChange={(e) => setTextoBusqueda(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Detener la propagación para que los listeners globales no interfieran
+                    e.stopPropagation();
+                  }}
+                  onKeyPress={(e) => {
+                    // Detener la propagación para que los listeners globales no interfieran
+                    e.stopPropagation();
+                  }}
                   style={{
-                    padding: '8px 12px',
-                    border: 'none',
-                    borderRadius: '6px',
-                    backgroundColor: '#f3f4f6',
-                    color: '#666',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem',
+                    flex: 1,
+                    padding: '10px 15px',
+                    border: '2px solid #e0e0e0',
+                    borderRadius: '8px',
+                    fontSize: '0.95rem',
+                    outline: 'none',
                     transition: 'all 0.2s',
                   }}
-                  onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = '#e5e7eb';
+                  onFocus={(e) => {
+                    e.target.style.borderColor = '#2196F3';
+                    e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
                   }}
-                  onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = '#f3f4f6';
+                  onBlur={(e) => {
+                    e.target.style.borderColor = '#e0e0e0';
+                    e.target.style.boxShadow = 'none';
                   }}
-                >
-                  ✕
-                </button>
-              )}
+                />
+                {textoBusqueda && (
+                  <button
+                    onClick={() => setTextoBusqueda('')}
+                    style={{
+                      padding: '8px 12px',
+                      border: 'none',
+                      borderRadius: '6px',
+                      backgroundColor: '#f3f4f6',
+                      color: '#666',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#e5e7eb';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#f3f4f6';
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={() => setShowModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#2196F3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#1976D2';
+                  e.target.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#2196F3';
+                  e.target.style.transform = 'translateY(0)';
+                }}
+              >
+                + Nuevo Pedido
+              </button>
             </div>
-            <button
-              onClick={() => setShowModal(true)}
-              style={{
-                padding: '10px 20px',
-                backgroundColor: '#2196F3',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '600',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                transition: 'all 0.2s',
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.backgroundColor = '#1976D2';
-                e.target.style.transform = 'translateY(-1px)';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.backgroundColor = '#2196F3';
-                e.target.style.transform = 'translateY(0)';
-              }}
-            >
-              + Nuevo Pedido
-            </button>
           </div>
           <div className="pedidos-grid">
             {pedidos.filter(pedido => {
@@ -1670,11 +1674,11 @@ const AdminPanel = () => {
                       fontWeight: '700',
                       boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
                     }}>
-                      📦
+                      📋
                     </div>
                     <div>
                       <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
-                        Planilla #{pedido.numeroPlanilla}
+                        {pedido.numeroPlanilla}
                       </h3>
                       <div style={{ 
                         fontSize: '0.85rem', 
@@ -1884,12 +1888,19 @@ const AdminPanel = () => {
                     outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === index ? '2px' : '0',
                   }}
                   onMouseEnter={(e) => {
+                    // Solo cambiar el color si el botón NO está activo
                     if (filtroEtapaPreparacion !== filtro) {
                       e.target.style.backgroundColor = '#e5e7eb';
                     }
+                    // Si está activo, no hacer nada (mantener el color del style prop)
                   }}
                   onMouseLeave={(e) => {
-                    if (filtroEtapaPreparacion !== filtro) {
+                    // Restaurar el color basado en el estado actual
+                    if (filtroEtapaPreparacion === filtro) {
+                      // Si está activo, mantener el color activo
+                      e.target.style.backgroundColor = '#2196F3';
+                    } else {
+                      // Si NO está activo, restaurar el color inactivo
                       e.target.style.backgroundColor = '#f3f4f6';
                     }
                   }}
@@ -2050,11 +2061,11 @@ const AdminPanel = () => {
                       fontWeight: '700',
                       boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
                     }}>
-                      📦
+                      📋
                     </div>
                     <div>
                       <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
-                        Planilla #{pedido.numeroPlanilla}
+                        {pedido.numeroPlanilla}
                       </h3>
                       <div style={{ 
                         fontSize: '0.85rem', 
@@ -2157,7 +2168,7 @@ const AdminPanel = () => {
                         color: '#E65100',
                         marginBottom: '4px'
                       }}>
-                        📦 Pendiente de Carga
+                        📋 Pendiente de Carga
                       </div>
                       <div style={{ 
                         fontSize: '0.9rem', 
@@ -2530,7 +2541,7 @@ const AdminPanel = () => {
                                 fontWeight: '700',
                                 boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
                               }}>
-                                📦
+                                📋
                               </div>
                               <div>
                                 <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
@@ -2642,7 +2653,7 @@ const AdminPanel = () => {
                                       color: '#E65100',
                                       marginBottom: '4px'
                                     }}>
-                                      📦 Pend. de Carga
+                                      📋 Pend. de Carga
                                     </div>
                                     <div style={{ 
                                       fontSize: '0.9rem', 
@@ -4248,13 +4259,13 @@ const AdminPanel = () => {
         });
 
         return (
-          <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
             <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflow: 'auto' }}>
-              <h3>Resumen - {fechaResumen}</h3>
-              <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
-                Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
-              </div>
-              <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+            <h3>Resumen - {fechaResumen}</h3>
+            <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
+              Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
+            </div>
+            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                 {vueltasOrdenadas.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                     No hay planillas para este día
@@ -4277,21 +4288,21 @@ const AdminPanel = () => {
                       </h4>
                       {/* Tabla de pedidos de esta vuelta */}
                       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>N° Planilla</th>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Cantidad</th>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Zona</th>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Transporte</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                  </tr>
+                </thead>
+                <tbody>
                           {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
-                            <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
-                              <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
-                                {pedido.numeroPlanilla}
-                              </td>
-                              <td style={{ padding: '12px', color: '#666' }}>
+                      <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
+                          {pedido.numeroPlanilla}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
                                 {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
                               </td>
                               <td style={{ padding: '12px', color: '#666' }}>
@@ -4299,26 +4310,26 @@ const AdminPanel = () => {
                               </td>
                               <td style={{ padding: '12px', color: '#666' }}>
                                 {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
-                              </td>
-                            </tr>
+                        </td>
+                      </tr>
                           ))}
-                        </tbody>
-                      </table>
+                </tbody>
+              </table>
                     </div>
                   ))
                 )}
-              </div>
-              <div className="modal-actions" style={{ marginTop: '20px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowResumenModal(false)}
-                  className="btn-secondary"
-                >
-                  Cerrar
-                </button>
-              </div>
+            </div>
+            <div className="modal-actions" style={{ marginTop: '20px' }}>
+              <button
+                type="button"
+                onClick={() => setShowResumenModal(false)}
+                className="btn-secondary"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
+        </div>
         );
       })()}
 

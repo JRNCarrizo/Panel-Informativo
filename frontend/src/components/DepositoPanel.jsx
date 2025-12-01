@@ -1794,7 +1794,7 @@ const DepositoPanel = () => {
             className={filtroEstado === 'TRANSPORTISTAS' ? 'active' : ''}
             onClick={() => setFiltroEstado('TRANSPORTISTAS')}
           >
-            Transportistas
+            Transportes
           </button>
         </div>
       </div>
@@ -1961,7 +1961,7 @@ const DepositoPanel = () => {
           </div>
         )}
 
-        {/* Tab de Transportistas - Solo lectura */}
+        {/* Tab de Transportes - Solo lectura */}
         {filtroEstado === 'TRANSPORTISTAS' && (
           <div style={{
             backgroundColor: 'white',
@@ -1969,7 +1969,7 @@ const DepositoPanel = () => {
             borderRadius: '8px',
             boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
           }}>
-            <h2 style={{ marginBottom: '20px', color: '#333' }}>Transportistas</h2>
+            <h2 style={{ marginBottom: '20px', color: '#333' }}>Transportes</h2>
             {transportistas.length === 0 ? (
               <p style={{ textAlign: 'center', color: '#666', padding: '40px' }}>
                 No hay transportistas registrados
@@ -1991,23 +1991,7 @@ const DepositoPanel = () => {
                       fontWeight: 'bold',
                       color: '#333'
                     }}>
-                      Código Interno
-                    </th>
-                    <th style={{ 
-                      padding: '12px', 
-                      textAlign: 'left',
-                      fontWeight: 'bold',
-                      color: '#333'
-                    }}>
-                      Chofer
-                    </th>
-                    <th style={{ 
-                      padding: '12px', 
-                      textAlign: 'left',
-                      fontWeight: 'bold',
-                      color: '#333'
-                    }}>
-                      Vehículo
+                      Nombre
                     </th>
                     <th style={{ 
                       padding: '12px', 
@@ -2031,13 +2015,7 @@ const DepositoPanel = () => {
                       onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                     >
                       <td style={{ padding: '12px', color: '#333' }}>
-                        {transportista.codigoInterno}
-                      </td>
-                      <td style={{ padding: '12px', color: '#333' }}>
-                        {transportista.chofer}
-                      </td>
-                      <td style={{ padding: '12px', color: '#333' }}>
-                        {transportista.vehiculo}
+                        {transportista.nombre}
                       </td>
                       <td style={{ padding: '12px' }}>
                         <span style={{
@@ -2295,7 +2273,7 @@ const DepositoPanel = () => {
                               fontWeight: '700',
                               boxShadow: '0 4px 12px rgba(15, 118, 110, 0.3)'
                             }}>
-                              📦
+                              📋
                             </div>
                             <div>
                               <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
@@ -2974,7 +2952,7 @@ const DepositoPanel = () => {
                     fontWeight: '700',
                     boxShadow: '0 4px 12px rgba(15, 118, 110, 0.3)'
                   }}>
-                    📦
+                    📋
                   </div>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
@@ -3102,91 +3080,91 @@ const DepositoPanel = () => {
               {pedido.estado !== 'REALIZADO' && (
                 <div className="pedido-actions">
                   {/* Asignar Equipo disponible en todas las etapas hasta finalizar */}
-                  <div className="action-group" style={{ position: 'relative' }}>
-                    <label>Asignar Equipo:</label>
-                    <select
-                      ref={(el) => {
-                        if (el) equipoSelectRefs.current[pedido.id] = el;
-                      }}
-                      data-pedido-id={pedido.id}
-                      value={pedido.grupoId || ''}
-                      onChange={(e) => {
-                        if (e.target.value === 'sin-asignar') {
-                          handleQuitarGrupo(pedido.id);
-                        } else if (e.target.value) {
-                          handleAsignarGrupo(pedido.id, parseInt(e.target.value));
-                        }
-                        setShowEquipoTooltip(false);
-                      }}
-                      onMouseDown={(e) => {
-                        const equiposActivos = grupos.filter(g => g.activo !== false);
-                        if (equiposActivos.length === 0) {
-                          e.preventDefault();
-                          setEquipoTooltipPedidoId(pedido.id);
-                          setShowEquipoTooltip(true);
-                          // Cerrar el tooltip después de 5 segundos
-                          setTimeout(() => setShowEquipoTooltip(false), 5000);
-                        }
-                      }}
-                      onFocus={(e) => {
-                        const equiposActivos = grupos.filter(g => g.activo !== false);
-                        if (equiposActivos.length === 0) {
-                          e.target.blur();
-                          setEquipoTooltipPedidoId(pedido.id);
-                          setShowEquipoTooltip(true);
-                          // Cerrar el tooltip después de 5 segundos
-                          setTimeout(() => setShowEquipoTooltip(false), 5000);
-                        }
-                      }}
-                      onBlur={() => {
-                        // Cerrar el tooltip después de un pequeño delay para permitir que se vea
-                        setTimeout(() => setShowEquipoTooltip(false), 200);
-                      }}
-                    >
-                      <option value="">Seleccionar...</option>
-                      {grupos.map((grupo) => (
-                        <option key={grupo.id} value={grupo.id}>
-                          {grupo.nombre}
-                        </option>
-                      ))}
-                      <option value="sin-asignar">Sin asignar</option>
-                    </select>
-                    {showEquipoTooltip && equipoTooltipPedidoId === pedido.id && grupos.filter(g => g.activo !== false).length === 0 && (
-                      <div style={{
-                        position: 'absolute',
-                        top: '100%',
-                        left: 0,
-                        marginTop: '8px',
-                        padding: '12px 16px',
-                        backgroundColor: '#0f766e',
-                        color: 'white',
-                        borderRadius: '8px',
-                        fontSize: '0.9rem',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        zIndex: 1000,
-                        maxWidth: '300px',
-                        lineHeight: '1.5',
-                        animation: 'fadeIn 0.3s ease-in'
-                      }}>
-                        <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
-                          ℹ️ No hay equipos registrados
-                        </div>
-                        <div>
-                          Para asignar un equipo, primero debes ir a la sección <strong>"Equipos"</strong> y crear al menos un equipo.
-                        </div>
+                    <div className="action-group" style={{ position: 'relative' }}>
+                      <label>Asignar Equipo:</label>
+                      <select
+                        ref={(el) => {
+                          if (el) equipoSelectRefs.current[pedido.id] = el;
+                        }}
+                        data-pedido-id={pedido.id}
+                        value={pedido.grupoId || ''}
+                        onChange={(e) => {
+                          if (e.target.value === 'sin-asignar') {
+                            handleQuitarGrupo(pedido.id);
+                          } else if (e.target.value) {
+                            handleAsignarGrupo(pedido.id, parseInt(e.target.value));
+                          }
+                          setShowEquipoTooltip(false);
+                        }}
+                        onMouseDown={(e) => {
+                          const equiposActivos = grupos.filter(g => g.activo !== false);
+                          if (equiposActivos.length === 0) {
+                            e.preventDefault();
+                            setEquipoTooltipPedidoId(pedido.id);
+                            setShowEquipoTooltip(true);
+                            // Cerrar el tooltip después de 5 segundos
+                            setTimeout(() => setShowEquipoTooltip(false), 5000);
+                          }
+                        }}
+                        onFocus={(e) => {
+                          const equiposActivos = grupos.filter(g => g.activo !== false);
+                          if (equiposActivos.length === 0) {
+                            e.target.blur();
+                            setEquipoTooltipPedidoId(pedido.id);
+                            setShowEquipoTooltip(true);
+                            // Cerrar el tooltip después de 5 segundos
+                            setTimeout(() => setShowEquipoTooltip(false), 5000);
+                          }
+                        }}
+                        onBlur={() => {
+                          // Cerrar el tooltip después de un pequeño delay para permitir que se vea
+                          setTimeout(() => setShowEquipoTooltip(false), 200);
+                        }}
+                      >
+                        <option value="">Seleccionar...</option>
+                        {grupos.map((grupo) => (
+                          <option key={grupo.id} value={grupo.id}>
+                            {grupo.nombre}
+                          </option>
+                        ))}
+                        <option value="sin-asignar">Sin asignar</option>
+                      </select>
+                      {showEquipoTooltip && equipoTooltipPedidoId === pedido.id && grupos.filter(g => g.activo !== false).length === 0 && (
                         <div style={{
                           position: 'absolute',
-                          bottom: '100%',
-                          left: '20px',
-                          width: 0,
-                          height: 0,
-                          borderLeft: '8px solid transparent',
-                          borderRight: '8px solid transparent',
-                          borderBottom: '8px solid #0f766e'
-                        }}></div>
-                      </div>
-                    )}
-                  </div>
+                          top: '100%',
+                          left: 0,
+                          marginTop: '8px',
+                          padding: '12px 16px',
+                          backgroundColor: '#0f766e',
+                          color: 'white',
+                          borderRadius: '8px',
+                          fontSize: '0.9rem',
+                          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                          zIndex: 1000,
+                          maxWidth: '300px',
+                          lineHeight: '1.5',
+                          animation: 'fadeIn 0.3s ease-in'
+                        }}>
+                          <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
+                            ℹ️ No hay equipos registrados
+                          </div>
+                          <div>
+                            Para asignar un equipo, primero debes ir a la sección <strong>"Equipos"</strong> y crear al menos un equipo.
+                          </div>
+                          <div style={{
+                            position: 'absolute',
+                            bottom: '100%',
+                            left: '20px',
+                            width: 0,
+                            height: 0,
+                            borderLeft: '8px solid transparent',
+                            borderRight: '8px solid transparent',
+                            borderBottom: '8px solid #0f766e'
+                          }}></div>
+                        </div>
+                      )}
+                    </div>
                   <div className="action-group">
                     {pedido.estado === 'PENDIENTE' && (
                       <button
@@ -3541,13 +3519,13 @@ const DepositoPanel = () => {
         });
 
         return (
-          <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
+        <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
             <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflow: 'auto' }}>
-              <h3>Resumen - {fechaResumen}</h3>
-              <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
-                Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
-              </div>
-              <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+            <h3>Resumen - {fechaResumen}</h3>
+            <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
+              Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
+            </div>
+            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                 {vueltasOrdenadas.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                     No hay planillas para este día
@@ -3570,21 +3548,21 @@ const DepositoPanel = () => {
                       </h4>
                       {/* Tabla de pedidos de esta vuelta */}
                       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>N° Planilla</th>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Cantidad</th>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Zona</th>
                             <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Transporte</th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                  </tr>
+                </thead>
+                <tbody>
                           {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
-                            <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
-                              <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
-                                {pedido.numeroPlanilla}
-                              </td>
-                              <td style={{ padding: '12px', color: '#666' }}>
+                      <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
+                          {pedido.numeroPlanilla}
+                        </td>
+                        <td style={{ padding: '12px', color: '#666' }}>
                                 {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
                               </td>
                               <td style={{ padding: '12px', color: '#666' }}>
@@ -3592,26 +3570,26 @@ const DepositoPanel = () => {
                               </td>
                               <td style={{ padding: '12px', color: '#666' }}>
                                 {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
-                              </td>
-                            </tr>
+                        </td>
+                      </tr>
                           ))}
-                        </tbody>
-                      </table>
+                </tbody>
+              </table>
                     </div>
                   ))
                 )}
-              </div>
-              <div className="modal-actions" style={{ marginTop: '20px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowResumenModal(false)}
-                  className="btn-secondary"
-                >
-                  Cerrar
-                </button>
-              </div>
+            </div>
+            <div className="modal-actions" style={{ marginTop: '20px' }}>
+              <button
+                type="button"
+                onClick={() => setShowResumenModal(false)}
+                className="btn-secondary"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
+        </div>
         );
       })()}
       {/* Componente Chat */}

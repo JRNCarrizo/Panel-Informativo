@@ -316,45 +316,15 @@ const Chat = ({ onClose, rolDestinatario }) => {
     <div className={`chat-container ${isAdminChat ? 'chat-admin' : 'chat-deposito'}`}>
       <div className={`chat-header ${isAdminChat ? 'chat-header-admin' : 'chat-header-deposito'}`}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {isAdminChat ? (
-            <svg 
-              width="24" 
-              height="24" 
-              viewBox="0 0 100 100" 
-              style={{ 
-                verticalAlign: 'middle',
-                display: 'inline-block'
-              }}
-            >
-              <rect width="100" height="100" fill="rgba(255, 255, 255, 0.2)" rx="10"/>
-              <g fill="white" opacity="0.95">
-                <rect x="20" y="60" width="12" height="25" rx="2"/>
-                <rect x="36" y="50" width="12" height="35" rx="2"/>
-                <rect x="52" y="40" width="12" height="45" rx="2"/>
-                <rect x="68" y="55" width="12" height="30" rx="2"/>
-              </g>
-              <polyline points="20,70 36,60 52,50 68,55" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity="0.95"/>
-            </svg>
-          ) : (
-            <svg 
-              width="24" 
-              height="24" 
-              viewBox="0 0 100 100" 
-              style={{ 
-                verticalAlign: 'middle',
-                display: 'inline-block'
-              }}
-            >
-              <rect width="100" height="100" fill="rgba(255, 255, 255, 0.2)" rx="10"/>
-              <g fill="white" opacity="0.95">
-                <rect x="20" y="60" width="12" height="25" rx="2"/>
-                <rect x="36" y="50" width="12" height="35" rx="2"/>
-                <rect x="52" y="40" width="12" height="45" rx="2"/>
-                <rect x="68" y="55" width="12" height="30" rx="2"/>
-              </g>
-              <polyline points="20,70 36,60 52,50 68,55" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity="0.95"/>
-            </svg>
-          )}
+          <img 
+            src="/logo-empresa.png" 
+            alt="Logo Empresa" 
+            style={{ 
+              height: '32px',
+              width: 'auto',
+              objectFit: 'contain'
+            }}
+          />
           <h3>Chat - {destinoRol === 'ADMIN' ? 'Administración' : 'Depósito'}</h3>
         </div>
         <button onClick={onClose} className="chat-close-btn">✕</button>
