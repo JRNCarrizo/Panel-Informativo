@@ -237,20 +237,9 @@ const PantallaPublica = () => {
       title={cursorVisible ? "Clic para entrar/salir de pantalla completa" : ""}
     >
       <header className="pantalla-header">
-        <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'stretch', justifyContent: 'space-between' }}>
+        <div className="pantalla-header-container">
           {/* Contenedor del logo a la izquierda */}
-          <div style={{
-            backgroundColor: 'rgba(255, 255, 255, 0.15)',
-            padding: '18px 25px',
-            borderRadius: '12px',
-            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
-            backdropFilter: 'blur(10px)',
-            border: '2px solid rgba(255, 255, 255, 0.2)',
-            marginRight: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
+          <div className="pantalla-logo-container">
             <img 
               src="/logo-empresa.png" 
               alt="Logo Empresa" 
@@ -264,20 +253,9 @@ const PantallaPublica = () => {
           </div>
           
           {/* Cuadro de hora */}
-          <div style={{
-            backgroundColor: 'rgba(0, 0, 0, 0.4)',
-            padding: '18px 28px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
-            minWidth: '140px',
-            textAlign: 'center',
-            marginRight: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
+          <div className="pantalla-hora-container">
             <div style={{
-              fontSize: 'clamp(2.5rem, 4vw, 3.5rem)', /* Responsive para hora - aumentado */
+              fontSize: 'clamp(2.5rem, 4vw, 3.5rem)',
               fontWeight: 'bold',
               textShadow: '2px 2px 4px rgba(0, 0, 0, 0.5)',
               lineHeight: '1',
@@ -291,7 +269,7 @@ const PantallaPublica = () => {
             </div>
           </div>
           
-          <div style={{ flex: 1, textAlign: 'center', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+          <div className="pantalla-titulo-container">
             <h1 style={{ margin: 0, marginBottom: '8px' }}>PANEL CENTRAL</h1>
             <div className="fecha-hora">
               {horaActual.toLocaleString('es-AR', {
@@ -303,7 +281,7 @@ const PantallaPublica = () => {
             </div>
           </div>
           {/* Contenedor de contadores */}
-          <div style={{ display: 'flex', gap: '20px', marginLeft: '15px' }}>
+          <div className="pantalla-contadores-container">
             {/* Contador de total activos */}
             <div style={{
               backgroundColor: 'rgba(76, 175, 80, 0.9)',

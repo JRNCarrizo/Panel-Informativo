@@ -5,6 +5,8 @@ import { grupoService } from '../services/grupoService';
 import { transportistaService } from '../services/transportistaService';
 import { mensajeService } from '../services/mensajeService';
 import { connectWebSocket, disconnectWebSocket } from '../services/websocketService';
+import SockJS from 'sockjs-client';
+import { Client } from '@stomp/stompjs';
 import Chat from './Chat';
 import './DepositoPanel.css';
 
@@ -198,6 +200,65 @@ const DepositoPanel = () => {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Suscribirse a mensajes nuevos vía WebSocket para actualizar contador en tiempo real
+  useEffect(() => {
+    if (!user?.rol) return;
+
+    const backendUrl = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+      ? `http://${window.location.hostname}:8080`
+      : 'http://localhost:8080';
+
+    const socket = new SockJS(`${backendUrl}/ws`);
+    const client = new Client({
+      webSocketFactory: () => socket,
+      reconnectDelay: 5000,
+      heartbeatIncoming: 4000,
+      heartbeatOutgoing: 4000,
+      onConnect: () => {
+        const rolUsuario = user.rol.toLowerCase();
+        const topicNuevo = '/topic/mensajes/nuevo';
+        const topicLeido = `/topic/mensajes/leido/${rolUsuario}`;
+        const topicTodosLeidos = `/topic/mensajes/todos-leidos/${rolUsuario}`;
+
+        // Suscribirse a mensajes nuevos
+        client.subscribe(topicNuevo, (message) => {
+          const nuevoMensaje = JSON.parse(message.body);
+          // Solo actualizar si el mensaje es para nuestro rol
+          if (nuevoMensaje.rolDestinatario === user.rol) {
+            // Actualizar contador de forma optimista (incrementar inmediatamente)
+            setCantidadMensajesNoLeidos(prev => {
+              // Si el mensaje no está leído, incrementar
+              if (!nuevoMensaje.leido) {
+                return prev + 1;
+              }
+              return prev;
+            });
+            // También actualizar desde el servidor para confirmar
+            actualizarCantidadMensajesNoLeidos();
+          }
+        });
+
+        // Suscribirse a mensajes leídos
+        client.subscribe(topicLeido, () => {
+          actualizarCantidadMensajesNoLeidos();
+        });
+
+        // Suscribirse a todos los mensajes leídos
+        client.subscribe(topicTodosLeidos, () => {
+          setCantidadMensajesNoLeidos(0);
+        });
+      },
+    });
+
+    client.activate();
+
+    return () => {
+      if (client) {
+        client.deactivate();
+      }
+    };
+  }, [user?.rol]);
 
   // Resetear el índice del pedido seleccionado y el modo navegación al cambiar de pestaña
   useEffect(() => {

@@ -8,6 +8,8 @@ import { mensajeService } from '../services/mensajeService';
 import { zonaService } from '../services/zonaService';
 import { vueltaService } from '../services/vueltaService';
 import { connectWebSocket, disconnectWebSocket } from '../services/websocketService';
+import SockJS from 'sockjs-client';
+import { Client } from '@stomp/stompjs';
 import Chat from './Chat';
 import './AdminPanel.css';
 
@@ -449,6 +451,65 @@ const AdminPanel = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Suscribirse a mensajes nuevos vía WebSocket para actualizar contador en tiempo real
+  useEffect(() => {
+    if (!user?.rol) return;
+
+    const backendUrl = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
+      ? `http://${window.location.hostname}:8080`
+      : 'http://localhost:8080';
+
+    const socket = new SockJS(`${backendUrl}/ws`);
+    const client = new Client({
+      webSocketFactory: () => socket,
+      reconnectDelay: 5000,
+      heartbeatIncoming: 4000,
+      heartbeatOutgoing: 4000,
+      onConnect: () => {
+        const rolUsuario = user.rol.toLowerCase();
+        const topicNuevo = '/topic/mensajes/nuevo';
+        const topicLeido = `/topic/mensajes/leido/${rolUsuario}`;
+        const topicTodosLeidos = `/topic/mensajes/todos-leidos/${rolUsuario}`;
+
+        // Suscribirse a mensajes nuevos
+        client.subscribe(topicNuevo, (message) => {
+          const nuevoMensaje = JSON.parse(message.body);
+          // Solo actualizar si el mensaje es para nuestro rol
+          if (nuevoMensaje.rolDestinatario === user.rol) {
+            // Actualizar contador de forma optimista (incrementar inmediatamente)
+            setCantidadMensajesNoLeidos(prev => {
+              // Si el mensaje no está leído, incrementar
+              if (!nuevoMensaje.leido) {
+                return prev + 1;
+              }
+              return prev;
+            });
+            // También actualizar desde el servidor para confirmar
+            actualizarCantidadMensajesNoLeidos();
+          }
+        });
+
+        // Suscribirse a mensajes leídos
+        client.subscribe(topicLeido, () => {
+          actualizarCantidadMensajesNoLeidos();
+        });
+
+        // Suscribirse a todos los mensajes leídos
+        client.subscribe(topicTodosLeidos, () => {
+          setCantidadMensajesNoLeidos(0);
+        });
+      },
+    });
+
+    client.activate();
+
+    return () => {
+      if (client) {
+        client.deactivate();
+      }
+    };
+  }, [user?.rol]);
+
   // Cerrar modal con ESC
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -484,7 +545,7 @@ const AdminPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showModal, showTransportistaModal, showUsuarioModal, showChat]);
+  }, [showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal, showChat]);
 
   // Navegación con flechas entre pestañas principales (solo si no estamos en modo navegación de sub-pestañas)
   useEffect(() => {
@@ -1616,18 +1677,18 @@ const AdminPanel = () => {
                   </button>
                 )}
               </div>
-              <button
-                onClick={() => setShowModal(true)}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#2196F3',
-                  color: 'white',
-                  border: 'none',
+            <button
+              onClick={() => setShowModal(true)}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#2196F3',
+                color: 'white',
+                border: 'none',
                   borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
+                cursor: 'pointer',
+                fontSize: '14px',
                   fontWeight: '600',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                   transition: 'all 0.2s',
                 }}
                 onMouseEnter={(e) => {
@@ -1638,9 +1699,9 @@ const AdminPanel = () => {
                   e.target.style.backgroundColor = '#2196F3';
                   e.target.style.transform = 'translateY(0)';
                 }}
-              >
-                + Nuevo Pedido
-              </button>
+            >
+              + Nuevo Pedido
+            </button>
             </div>
           </div>
           <div className="pedidos-grid">
@@ -3353,7 +3414,14 @@ const AdminPanel = () => {
               paddingRight: '10px',
               marginRight: '-10px'
             }}>
-            <form onSubmit={handleCrearPedido}>
+            <form onSubmit={handleCrearPedido} onKeyDown={(e) => {
+              // NO prevenir aquí - dejar que el handler del input maneje el Enter
+              // Solo prevenir submit si es un botón de submit
+              if (e.key === 'Enter' && e.target.type === 'submit') {
+                // Permitir submit normal
+                return;
+              }
+            }}>
               {/* Sección: Información Básica */}
               <div style={{
                 marginBottom: '24px',
@@ -3501,7 +3569,61 @@ const AdminPanel = () => {
                     type="text"
                     value={formData.transportistaNombre || ''}
                     onChange={handleTransportistaInputChange}
-                  onKeyDown={(e) => {
+                  onKeyDown={async (e) => {
+                    // Manejar Enter
+                    if (e.key === 'Enter') {
+                      // Si hay sugerencias en la lista, seleccionar una
+                      if (mostrarSugerenciasTransportista && transportistaSugerencias.length > 0) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (indiceTransportistaSeleccionada >= 0 && indiceTransportistaSeleccionada < transportistaSugerencias.length) {
+                          seleccionarTransportista(transportistaSugerencias[indiceTransportistaSeleccionada]);
+                        } else if (transportistaSugerencias.length > 0) {
+                          seleccionarTransportista(transportistaSugerencias[0]);
+                        }
+                        setTimeout(() => {
+                          zonaRef.current?.focus();
+                        }, 100);
+                        return false;
+                      } else {
+                        // Si NO hay sugerencias o la lista está vacía, crear transporte nuevo y saltar a zona
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        const nombreTransporte = formData.transportistaNombre?.trim();
+                        if (nombreTransporte) {
+                          // Crear el transporte si no existe
+                          try {
+                            // Verificar si el transporte ya existe en la lista
+                            const transporteExiste = transportistas.some(t => 
+                              t.nombre.toLowerCase() === nombreTransporte.toLowerCase()
+                            );
+                            
+                            // Si no existe, crearlo
+                            if (!transporteExiste) {
+                              await transportistaService.crear(nombreTransporte);
+                              // Recargar la lista de transportistas
+                              await cargarTransportistas();
+                            }
+                          } catch (error) {
+                            console.error('Error al crear transporte:', error);
+                            alert('Error al crear el transporte. Intente nuevamente.');
+                            return;
+                          }
+                          
+                          // Saltar a zona después de crear el transporte
+                          setTimeout(() => {
+                            if (zonaRef.current) {
+                              zonaRef.current.focus();
+                              zonaRef.current.select();
+                            }
+                          }, 300);
+                        }
+                        return false;
+                      }
+                    }
+                    
+                    // Manejar navegación con flechas cuando hay sugerencias
                     if (mostrarSugerenciasTransportista && transportistaSugerencias.length > 0) {
                       if (e.key === 'ArrowDown') {
                       e.preventDefault();
@@ -3527,23 +3649,10 @@ const AdminPanel = () => {
                             elemento.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
                           }
                         }, 0);
-                      } else if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (indiceTransportistaSeleccionada >= 0 && indiceTransportistaSeleccionada < transportistaSugerencias.length) {
-                          seleccionarTransportista(transportistaSugerencias[indiceTransportistaSeleccionada]);
-                        } else if (transportistaSugerencias.length > 0) {
-                          seleccionarTransportista(transportistaSugerencias[0]);
-                        }
-                        zonaRef.current?.focus();
                       } else if (e.key === 'Escape') {
                         e.preventDefault();
                         setMostrarSugerenciasTransportista(false);
                         setIndiceTransportistaSeleccionada(-1);
-                      }
-                    } else if (e.key === 'Enter' && !mostrarSugerenciasTransportista) {
-                      e.preventDefault();
-                      if (formData.transportistaNombre && formData.transportistaNombre.trim() !== '') {
-                        zonaRef.current?.focus();
                       }
                     }
                   }}
@@ -3682,7 +3791,7 @@ const AdminPanel = () => {
                       type="text"
                       value={formData.zonaNombre}
                       onChange={handleZonaInputChange}
-                    onKeyDown={(e) => {
+                    onKeyDown={async (e) => {
                       if (mostrarSugerenciasZona && zonaSugerencias.length > 0) {
                         if (e.key === 'ArrowDown') {
                           e.preventDefault();
@@ -3727,7 +3836,36 @@ const AdminPanel = () => {
                         }
                       } else if (e.key === 'Enter' && !mostrarSugerenciasZona) {
                         e.preventDefault();
-                        vueltaRef.current?.focus();
+                        e.stopPropagation();
+                        
+                        const nombreZona = formData.zonaNombre?.trim();
+                        if (nombreZona) {
+                          // Crear la zona si no existe (similar a transporte)
+                          try {
+                            // Verificar si la zona ya existe en la lista
+                            const zonaExiste = zonas.some(z => 
+                              z.nombre.toLowerCase() === nombreZona.toLowerCase()
+                            );
+                            
+                            // Si no existe, crearla
+                            if (!zonaExiste) {
+                              await zonaService.crearObtener(nombreZona);
+                              // Recargar la lista de zonas
+                              await cargarZonas();
+                            }
+                          } catch (error) {
+                            console.error('Error al crear zona:', error);
+                            // Continuar de todas formas para no bloquear la navegación
+                          }
+                        }
+                        
+                        // Saltar a vuelta después de crear la zona (si se creó)
+                        setTimeout(() => {
+                          if (vueltaRef.current) {
+                            vueltaRef.current.focus();
+                          }
+                        }, 200);
+                        return false;
                       }
                     }}
                     onFocus={() => {
