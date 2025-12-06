@@ -3,6 +3,7 @@ package com.Panelinformativo.pedidos.controller;
 import com.Panelinformativo.common.websocket.WebSocketService;
 import com.Panelinformativo.pedidos.dto.PedidoCreateDTO;
 import com.Panelinformativo.pedidos.dto.PedidoDTO;
+import com.Panelinformativo.pedidos.dto.TransportistaVueltasDTO;
 import com.Panelinformativo.pedidos.model.Pedido;
 import com.Panelinformativo.pedidos.service.PedidoService;
 import com.Panelinformativo.usuarios.model.Usuario;
@@ -37,6 +38,7 @@ public class PedidoController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
     public ResponseEntity<List<PedidoDTO>> obtenerTodosLosPedidos() {
         return ResponseEntity.ok(pedidoService.obtenerTodosLosPedidos());
     }
@@ -137,6 +139,73 @@ public class PedidoController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
+    }
+
+    // Obtener pedidos pendientes sin orden de prioridad de carga (para Panel Depósito)
+    @GetMapping("/pendientes/sin-orden")
+    @PreAuthorize("hasRole('DEPOSITO')")
+    public ResponseEntity<List<PedidoDTO>> obtenerPedidosPendientesSinOrden() {
+        return ResponseEntity.ok(pedidoService.obtenerPedidosPendientesSinOrden());
+    }
+
+    // Obtener pedidos pendientes con orden de prioridad de carga (para Pantalla Pública)
+    @GetMapping("/pendientes/con-orden")
+    public ResponseEntity<List<PedidoDTO>> obtenerPedidosConOrdenPrioridadCarga() {
+        return ResponseEntity.ok(pedidoService.obtenerPedidosConOrdenPrioridadCarga());
+    }
+
+    // Actualizar el orden de prioridad de carga de múltiples pedidos
+    @PutMapping("/prioridad-carga/orden")
+    @PreAuthorize("hasRole('DEPOSITO')")
+    public ResponseEntity<?> actualizarOrdenPrioridadCarga(@RequestBody List<Long> pedidoIds) {
+        try {
+            List<PedidoDTO> pedidos = pedidoService.actualizarOrdenPrioridadCarga(pedidoIds);
+            // Notificar a todos los clientes sobre el cambio de orden
+            pedidos.forEach(pedido -> webSocketService.notificarActualizacionPedido(pedido));
+            return ResponseEntity.ok(pedidos);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    // Remover un pedido de la cola de prioridad de carga
+    @PutMapping("/{id}/prioridad-carga/remover")
+    @PreAuthorize("hasRole('DEPOSITO')")
+    public ResponseEntity<?> removerDeColaPrioridadCarga(@PathVariable Long id) {
+        try {
+            PedidoDTO pedido = pedidoService.removerDeColaPrioridadCarga(id);
+            webSocketService.notificarActualizacionPedido(pedido);
+            return ResponseEntity.ok(pedido);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    // Agregar un pedido a la cola de prioridad de carga (al final)
+    @PutMapping("/{id}/prioridad-carga/agregar")
+    @PreAuthorize("hasRole('DEPOSITO')")
+    public ResponseEntity<?> agregarAColaPrioridadCarga(@PathVariable Long id) {
+        try {
+            PedidoDTO pedido = pedidoService.agregarAColaPrioridadCarga(id);
+            webSocketService.notificarActualizacionPedido(pedido);
+            return ResponseEntity.ok(pedido);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    // Obtener planillas recibidas en el día actual
+    @GetMapping("/del-dia")
+    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    public ResponseEntity<List<PedidoDTO>> obtenerPlanillasRecibidasDelDia() {
+        return ResponseEntity.ok(pedidoService.obtenerPlanillasRecibidasDelDia());
+    }
+
+    // Obtener resumen de transportistas con vueltas asignadas en el día
+    @GetMapping("/transportistas-vueltas/del-dia")
+    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    public ResponseEntity<List<TransportistaVueltasDTO>> obtenerResumenTransportistasVueltasDelDia() {
+        return ResponseEntity.ok(pedidoService.obtenerResumenTransportistasVueltasDelDia());
     }
 }
 

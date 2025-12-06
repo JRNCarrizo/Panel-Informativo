@@ -92,46 +92,18 @@ const PantallaPublica = () => {
     };
   }, []);
 
-  // Función para obtener el valor numérico de la prioridad (mayor = más urgente)
-  const getPrioridadValue = (prioridad) => {
-    const prioridades = {
-      'URGENTE': 4,
-      'ALTA': 3,
-      'NORMAL': 2,
-      'BAJA': 1
-    };
-    return prioridades[prioridad] || 0;
-  };
-
-  // Función para ordenar pedidos por prioridad y luego por fecha de carga
-  const ordenarPedidos = (pedidos) => {
-    return pedidos.sort((a, b) => {
-      // Primero comparar por prioridad
-      const prioridadA = getPrioridadValue(a.prioridad);
-      const prioridadB = getPrioridadValue(b.prioridad);
-      
-      if (prioridadA !== prioridadB) {
-        return prioridadB - prioridadA; // Mayor prioridad primero
-      }
-      
-      // Si tienen la misma prioridad, ordenar por fecha de creación (más antiguos primero)
-      const fechaA = new Date(a.fechaCreacion || a.fechaActualizacion || 0);
-      const fechaB = new Date(b.fechaCreacion || b.fechaActualizacion || 0);
-      return fechaA - fechaB;
-    });
-  };
 
   const cargarPedidos = async () => {
     try {
       setError(null);
-      const [pendientes, enPreparacion, realizados] = await Promise.all([
-        pedidoService.obtenerPorEstado('PENDIENTE'),
+      const [pedidosConOrden, enPreparacion, realizados] = await Promise.all([
+        pedidoService.obtenerConOrdenPrioridadCarga(),
         pedidoService.obtenerPorEstado('EN_PREPARACION'),
         pedidoService.obtenerPorEstado('REALIZADO'),
       ]);
       
-      // Prioridad de armado: PENDIENTE ordenados por prioridad y fecha
-      const pendientesOrdenados = ordenarPedidos([...(pendientes.data || [])]);
+      // Prioridad de armado: Solo PENDIENTE con ordenPrioridadCarga asignado, ordenados por ese orden
+      const pendientesOrdenados = pedidosConOrden.data || [];
       
       // Filtrar EN_PREPARACION por etapa
       const enPreparacionData = enPreparacion.data || [];
@@ -173,15 +145,6 @@ const PantallaPublica = () => {
                                pedidosControl.length + 
                                pedidosPendienteCarga.length;
 
-  const getPrioridadColor = (prioridad) => {
-    const colors = {
-      BAJA: '#4CAF50',
-      NORMAL: '#2196F3',
-      ALTA: '#FF9800',
-      URGENTE: '#F44336',
-    };
-    return colors[prioridad] || '#666';
-  };
 
   const toggleFullscreen = async () => {
     try {
@@ -380,7 +343,7 @@ const PantallaPublica = () => {
                     padding: '10px 15px',
                     backgroundColor: 'rgba(255, 255, 255, 0.1)',
                     borderRadius: '8px',
-                    border: `4px solid ${getPrioridadColor(pedido.prioridad)}`,
+                    border: `4px solid #2196F3`,
                     textAlign: 'center'
                   }}
                 >

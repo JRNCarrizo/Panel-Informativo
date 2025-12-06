@@ -47,8 +47,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/auth/existe-admin").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         // Endpoints públicos para la pantalla pública (solo lectura - GET)
-                        .requestMatchers(HttpMethod.GET, "/api/pedidos").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/pedidos/estado/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/pedidos/pendientes/con-orden").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session

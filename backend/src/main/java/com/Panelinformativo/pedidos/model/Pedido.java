@@ -10,6 +10,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -28,10 +29,6 @@ public class Pedido {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "transportista_id")
     private Transportista transportista;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Prioridad prioridad = Prioridad.NORMAL;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -68,16 +65,18 @@ public class Pedido {
     @Column(nullable = true)
     private LocalDateTime fechaPendienteCarga; // Fecha cuando pasó a PENDIENTE_CARGA
 
+    @Column(nullable = false)
+    private LocalDate fechaEntrega = LocalDate.now(); // Fecha en que se ejecutará la vuelta (por defecto la fecha de creación)
+
+    @Column(nullable = true)
+    private Integer ordenPrioridadCarga; // Orden manual definido en Panel Depósito para la cola de prioridad de carga
+
+    @Column(nullable = false)
+    private Boolean controlado = false; // Indica si el pedido ha sido controlado cuando está en etapa CONTROL
+
     @PreUpdate
     protected void onUpdate() {
         fechaActualizacion = LocalDateTime.now();
-    }
-
-    public enum Prioridad {
-        BAJA,
-        NORMAL,
-        ALTA,
-        URGENTE
     }
 
     public enum EstadoPedido {

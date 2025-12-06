@@ -25,7 +25,7 @@ public class PedidoCreateDTO {
 
     @NotBlank(message = "La vuelta es obligatoria")
     private String vueltaNombre; // Nombre de la vuelta (se creará/obtendrá automáticamente)
-
-    private Pedido.Prioridad prioridad = Pedido.Prioridad.NORMAL;
+    
+    private java.time.LocalDate fechaEntrega; // Fecha en que se ejecutará la vuelta (opcional, por defecto hoy)
 }
 

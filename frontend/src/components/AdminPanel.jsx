@@ -36,7 +36,7 @@ const AdminPanel = () => {
     zonaNombre: '',
     cantidad: '',
     vueltaNombre: '',
-    prioridad: 'NORMAL',
+    fechaEntrega: '', // Fecha de entrega (opcional, por defecto hoy)
   });
   const [zonaSugerencias, setZonaSugerencias] = useState([]);
   const [mostrarSugerenciasZona, setMostrarSugerenciasZona] = useState(false);
@@ -58,7 +58,7 @@ const AdminPanel = () => {
   const zonaRef = useRef(null);
   const cantidadRef = useRef(null);
   const vueltaRef = useRef(null);
-  const prioridadRef = useRef(null);
+  const fechaEntregaRef = useRef(null);
   // Refs para los campos del formulario de transportistas
   const codigoInternoRef = useRef(null);
   const choferRef = useRef(null);
@@ -99,15 +99,6 @@ const AdminPanel = () => {
   const [cantidadMensajesNoLeidos, setCantidadMensajesNoLeidos] = useState(0);
   // Estado para el buscador avanzado
   const [textoBusqueda, setTextoBusqueda] = useState('');
-  // Estado para el filtro de etapa de preparación (solo para pestaña "En Preparación")
-  const [filtroEtapaPreparacion, setFiltroEtapaPreparacion] = useState('TODOS'); // 'TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'
-  // Estados para navegación con teclado
-  const [enModoNavegacionSubPestanas, setEnModoNavegacionSubPestanas] = useState(false);
-  const [subPestanaSeleccionadaIndex, setSubPestanaSeleccionadaIndex] = useState(-1);
-  const [enModoNavegacionRegistros, setEnModoNavegacionRegistros] = useState(false);
-  const [pedidoSeleccionadoIndex, setPedidoSeleccionadoIndex] = useState(-1);
-  // Refs para los botones de sub-pestañas
-  const subPestanaButtonRefs = useRef([]);
   // Estados para navegación en "Realizados"
   const [diaSeleccionadoIndex, setDiaSeleccionadoIndex] = useState(-1);
   const [enModoNavegacionDias, setEnModoNavegacionDias] = useState(false);
@@ -133,8 +124,24 @@ const AdminPanel = () => {
   const [diasExpandidos, setDiasExpandidos] = useState(new Set());
   // Ref para rastrear si el usuario ha colapsado manualmente el día de hoy
   const hoyColapsadoManualmente = useRef(false);
+  // Estados para la nueva vista de Planillas agrupadas por día
+  const [todasLasPlanillas, setTodasLasPlanillas] = useState([]);
+  const [diasExpandidosPlanillas, setDiasExpandidosPlanillas] = useState(new Set());
+  const [showModalTransportistasVueltas, setShowModalTransportistasVueltas] = useState(false);
+  const [transportistasVueltas, setTransportistasVueltas] = useState([]);
+  const [loadingTransportistasVueltas, setLoadingTransportistasVueltas] = useState(false);
+  const [fechasExpandidas, setFechasExpandidas] = useState(new Set());
+  const [vistaPlanillas, setVistaPlanillas] = useState('hoy'); // 'hoy', 'todos', 'resumen'
+  const [showModalDetalle, setShowModalDetalle] = useState(false);
+  const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
+  const [filtroEstadoPorDia, setFiltroEstadoPorDia] = useState(new Map()); // Mapa: fecha -> filtro seleccionado
 
   useEffect(() => {
+    // Solo cargar datos si el usuario está autenticado
+    if (!user) {
+      return;
+    }
+
     cargarDatos();
     const stompClient = connectWebSocket((message) => {
       if (message.tipo === 'eliminado') {
@@ -147,20 +154,24 @@ const AdminPanel = () => {
             setPedidos(response.data || []);
           }).catch(err => console.error('Error al recargar pedidos realizados:', err));
         } else if (activeTab === 'pedidos') {
-          pedidoService.obtenerTodos().then(response => {
-            const pedidosFiltrados = (response.data || []).filter(p => p.estado === 'PENDIENTE');
-            setPedidos(pedidosFiltrados);
+          // Cargar todas las planillas para agruparlas por día
+          Promise.all([
+            pedidoService.obtenerTodos(),
+            pedidoService.obtenerPlanillasDelDia()
+          ]).then(([todasResponse, diaResponse]) => {
+            setTodasLasPlanillas(todasResponse.data || []);
+            setPedidos(diaResponse.data || []);
           }).catch(err => console.error('Error al recargar pedidos:', err));
-        } else if (activeTab === 'en-preparacion') {
-          pedidoService.obtenerPorEstado('EN_PREPARACION').then(response => {
-            setPedidos(response.data || []);
-          }).catch(err => console.error('Error al recargar pedidos en preparación:', err));
         }
         
         // Actualizar todos los pedidos para el contador (IMPORTANTE: esto actualiza el indicador)
         // Hacer esto siempre, independientemente de la pestaña activa
         pedidoService.obtenerTodos().then(response => {
           setTodosLosPedidos(response.data || []);
+          // Si estamos en la pestaña de pedidos, también actualizar todasLasPlanillas
+          if (activeTab === 'pedidos') {
+            setTodasLasPlanillas(response.data || []);
+          }
         }).catch(err => console.error('Error al actualizar todos los pedidos:', err));
       }
     });
@@ -168,10 +179,15 @@ const AdminPanel = () => {
     return () => {
       disconnectWebSocket();
     };
-  }, [activeTab]);
+  }, [activeTab, user]);
 
   // Cargar todos los pedidos para el contador, independiente de la pestaña activa
   useEffect(() => {
+    // Solo cargar si el usuario está autenticado
+    if (!user) {
+      return;
+    }
+
     const cargarTodosLosPedidos = async () => {
       try {
         const response = await pedidoService.obtenerTodos();
@@ -186,7 +202,7 @@ const AdminPanel = () => {
     const interval = setInterval(cargarTodosLosPedidos, 10000); // Cada 10 segundos
     
     return () => clearInterval(interval);
-  }, []);
+  }, [user]);
 
   const cargarDatos = async () => {
     // Cargar transportistas de forma independiente para no bloquear la carga de otros datos
@@ -281,13 +297,17 @@ const AdminPanel = () => {
         const response = await pedidoService.obtenerPorEstado('REALIZADO');
         setPedidos(response.data || []);
       } else if (activeTab === 'pedidos') {
-        // Para "pedidos", solo los pendientes
-        const response = await pedidoService.obtenerTodos();
-        const pedidosFiltrados = (response.data || []).filter(p => p.estado === 'PENDIENTE');
-        setPedidos(pedidosFiltrados);
-      } else if (activeTab === 'en-preparacion') {
-        const response = await pedidoService.obtenerPorEstado('EN_PREPARACION');
-        setPedidos(response.data || []);
+        // Para "pedidos", cargar todas las planillas (del día y anteriores)
+        // Usaremos el endpoint de planillas del día para el día actual
+        const response = await pedidoService.obtenerPlanillasDelDia();
+        const planillasDelDia = response.data || [];
+        
+        // También cargar todas las planillas para poder agruparlas por día
+        const responseTodas = await pedidoService.obtenerTodos();
+        setTodasLasPlanillas(responseTodas.data || []);
+        
+        // Para mantener compatibilidad, establecer los pedidos del día
+        setPedidos(planillasDelDia);
       }
     } catch (error) {
       console.error('Error al cargar pedidos:', error);
@@ -302,11 +322,11 @@ const AdminPanel = () => {
           const response = await pedidoService.obtenerPorEstado('REALIZADO');
           setPedidos(response.data || []);
         } else if (activeTab === 'pedidos') {
-          const response = await pedidoService.obtenerTodos();
-          const pedidosFiltrados = (response.data || []).filter(p => p.estado === 'PENDIENTE');
-          setPedidos(pedidosFiltrados);
-        } else if (activeTab === 'en-preparacion') {
-          const response = await pedidoService.obtenerPorEstado('EN_PREPARACION');
+          // Cargar todas las planillas para agruparlas por día
+          const responseTodas = await pedidoService.obtenerTodos();
+          setTodasLasPlanillas(responseTodas.data || []);
+          // También cargar planillas del día para mantener compatibilidad
+          const response = await pedidoService.obtenerPlanillasDelDia();
           setPedidos(response.data || []);
         }
       } catch (error) {
@@ -315,17 +335,9 @@ const AdminPanel = () => {
     };
 
     // Limpiar pedidos inmediatamente al cambiar de pestaña para evitar mostrar datos incorrectos
-    if (activeTab === 'pedidos' || activeTab === 'en-preparacion' || activeTab === 'realizados') {
+    if (activeTab === 'pedidos' || activeTab === 'realizados') {
       setPedidos([]);
       setTextoBusqueda(''); // Limpiar búsqueda al cambiar de pestaña
-      if (activeTab === 'en-preparacion') {
-        setFiltroEtapaPreparacion('TODOS'); // Resetear filtro de etapa
-      }
-      // Resetear estados de navegación
-      setEnModoNavegacionSubPestanas(false);
-      setSubPestanaSeleccionadaIndex(-1);
-      setEnModoNavegacionRegistros(false);
-      setPedidoSeleccionadoIndex(-1);
       cargarSegunPestaña();
     } else if (activeTab === 'equipos') {
       cargarEquipos();
@@ -516,7 +528,7 @@ const AdminPanel = () => {
       if (event.key === 'Escape') {
         if (showModal) {
           setShowModal(false);
-          setFormData({ numeroPlanilla: '', transportistaNombre: '', prioridad: 'NORMAL' });
+          setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', fechaEntrega: '' });
         } else if (showTransportistaModal) {
           setShowTransportistaModal(false);
           setTransportistaForm({ codigoInterno: '', chofer: '', vehiculo: '' });
@@ -533,6 +545,8 @@ const AdminPanel = () => {
           setVueltaEditando(null);
         } else if (showChat) {
           setShowChat(false);
+        } else if (showModalDetalle) {
+          cerrarModalDetalle();
         } else if (mostrarSugerenciasZona) {
           setMostrarSugerenciasZona(false);
         } else if (mostrarSugerenciasVuelta) {
@@ -545,13 +559,73 @@ const AdminPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal, showChat]);
+  }, [showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal, showChat, showModalDetalle]);
+
+  // Manejar flechas arriba/abajo en el campo de fecha de entrega
+  useEffect(() => {
+    if (!showModal) {
+        return;
+      }
+
+    const handleKeyDown = (e) => {
+      // Solo manejar si estamos en el modal y el input de fecha está enfocado
+      if (!fechaEntregaRef.current || document.activeElement !== fechaEntregaRef.current) {
+        return;
+      }
+
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
+        const hoy = new Date();
+        hoy.setHours(0, 0, 0, 0);
+        const fechaActual = formData.fechaEntrega || hoy.toISOString().split('T')[0];
+        
+        // Crear la fecha de forma más segura
+        const fechaParts = fechaActual.split('-');
+        const fecha = new Date(parseInt(fechaParts[0]), parseInt(fechaParts[1]) - 1, parseInt(fechaParts[2]));
+        
+        if (e.key === 'ArrowUp') {
+          fecha.setDate(fecha.getDate() + 1);
+        } else if (e.key === 'ArrowDown') {
+          fecha.setDate(fecha.getDate() - 1);
+          // Si la fecha resultante es anterior a hoy, usar hoy como mínimo
+          if (fecha < hoy) {
+            fecha.setTime(hoy.getTime());
+          }
+        }
+        
+        const year = fecha.getFullYear();
+        const month = String(fecha.getMonth() + 1).padStart(2, '0');
+        const day = String(fecha.getDate()).padStart(2, '0');
+        const nuevaFecha = `${year}-${month}-${day}`;
+        
+        // Actualizar el estado
+        setFormData(prev => ({ ...prev, fechaEntrega: nuevaFecha }));
+        
+        // También actualizar el valor del input directamente
+        if (fechaEntregaRef.current) {
+          fechaEntregaRef.current.value = nuevaFecha;
+        }
+        
+        return false;
+      }
+    };
+
+    // Usar capture: true para interceptar antes que el navegador procese el evento
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
+    };
+  }, [showModal, formData.fechaEntrega]);
 
   // Navegación con flechas entre pestañas principales (solo si no estamos en modo navegación de sub-pestañas)
   useEffect(() => {
     const handleKeyDown = (event) => {
       // No navegar si hay un modal abierto
-      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal) {
+      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal || showModalDetalle) {
         return;
       }
 
@@ -562,7 +636,7 @@ const AdminPanel = () => {
         focusedElement.tagName === 'SELECT' ||
         focusedElement.isContentEditable
       );
-      
+
       // Si estamos escribiendo en un input, NO hacer nada (permitir que el input maneje TODAS las teclas)
       if (isInputFocused) {
         return; // NO hacer preventDefault ni nada, solo retornar
@@ -574,19 +648,19 @@ const AdminPanel = () => {
       }
       // No navegar si estamos en modo navegación de días o registros en "Realizados"
       if (activeTab === 'realizados' && (enModoNavegacionDias || enModoNavegacionRegistrosRealizados)) {
-        return;
-      }
+          return;
+        }
 
-      const tabs = ['pedidos', 'en-preparacion', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'equipos'];
+      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'equipos'];
       const currentIndex = tabs.indexOf(activeTab);
 
       // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros ni de sub-pestañas)
       if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros && !enModoNavegacionDias && !enModoNavegacionRegistrosRealizados && !isInputFocused) {
       if (event.key === 'ArrowLeft' && currentIndex > 0) {
-        event.preventDefault();
+          event.preventDefault();
         setActiveTab(tabs[currentIndex - 1]);
       } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
-        event.preventDefault();
+          event.preventDefault();
         setActiveTab(tabs[currentIndex + 1]);
         }
       }
@@ -596,175 +670,7 @@ const AdminPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activeTab, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal, enModoNavegacionSubPestanas, enModoNavegacionRegistros, enModoNavegacionDias, enModoNavegacionRegistrosRealizados]);
-
-  // Navegación con teclado para la pestaña "En Preparación"
-  useEffect(() => {
-    if (activeTab !== 'en-preparacion') {
-      return;
-    }
-
-    const handleKeyDown = (event) => {
-      // No navegar si hay un modal abierto
-      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal) {
-        return;
-      }
-
-      const focusedElement = document.activeElement;
-      const isInputFocused = focusedElement && (
-        focusedElement.tagName === 'INPUT' || 
-        focusedElement.tagName === 'TEXTAREA' || 
-        focusedElement.tagName === 'SELECT' ||
-        focusedElement.isContentEditable
-      );
-
-      // Si estamos escribiendo en un input, NO hacer nada (permitir que el input maneje TODAS las teclas)
-      if (isInputFocused) {
-        return; // NO hacer preventDefault ni nada, solo retornar
-      }
-
-      // Obtener pedidos filtrados
-      const pedidosFiltrados = pedidos.filter(pedido => {
-        if (pedido.estado !== 'EN_PREPARACION') return false;
-        if (filtroEtapaPreparacion === 'TODOS') return true;
-        if (filtroEtapaPreparacion === 'SIN_CONTROL') return !pedido.etapaPreparacion;
-        if (filtroEtapaPreparacion === 'CONTROL') return pedido.etapaPreparacion === 'CONTROL';
-        if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') return pedido.etapaPreparacion === 'PENDIENTE_CARGA';
-        return true;
-      }).filter(pedido => {
-        // Aplicar filtro de búsqueda
-        if (textoBusqueda.trim()) {
-          const busqueda = textoBusqueda.toLowerCase().trim();
-          const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
-          const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
-          const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
-          const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
-          return matchPlanilla || matchTransporte || matchZona || matchVuelta;
-        }
-        return true;
-      });
-
-      // Si estamos en la pestaña principal y presionamos flecha abajo, entrar en modo navegación de sub-pestañas
-      if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros && event.key === 'ArrowDown') {
-        event.preventDefault();
-        setEnModoNavegacionSubPestanas(true);
-        setSubPestanaSeleccionadaIndex(0);
-        const firstSubButton = subPestanaButtonRefs.current[0];
-        if (firstSubButton) {
-          firstSubButton.focus();
-        }
-        return;
-      }
-
-      // Si estamos navegando sub-pestañas
-      if (enModoNavegacionSubPestanas && !enModoNavegacionRegistros) {
-        // Navegación izquierda/derecha entre sub-pestañas
-        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-          event.preventDefault();
-          const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
-          const nuevoIndex = event.key === 'ArrowLeft'
-            ? (subPestanaSeleccionadaIndex > 0 ? subPestanaSeleccionadaIndex - 1 : subPestanas.length - 1)
-            : (subPestanaSeleccionadaIndex < subPestanas.length - 1 ? subPestanaSeleccionadaIndex + 1 : 0);
-          const nuevoFiltro = subPestanas[nuevoIndex];
-          setSubPestanaSeleccionadaIndex(nuevoIndex);
-          setFiltroEtapaPreparacion(nuevoFiltro); // Actualizar el filtro para mantener consistencia
-          const subButton = subPestanaButtonRefs.current[nuevoIndex];
-          if (subButton) {
-            subButton.focus();
-          }
-          return;
-        }
-
-        // Si presionamos flecha abajo desde una sub-pestaña, entrar en modo navegación de registros
-        if (event.key === 'ArrowDown' && pedidosFiltrados.length > 0) {
-          event.preventDefault();
-          setEnModoNavegacionRegistros(true);
-          setPedidoSeleccionadoIndex(0);
-          setEnModoNavegacionSubPestanas(false);
-          // Enfocar el primer registro
-          const firstPedido = pedidosFiltrados[0];
-          if (firstPedido) {
-            const pedidoCard = document.querySelector(`[data-pedido-id="${firstPedido.id}"]`);
-            if (pedidoCard) {
-              pedidoCard.focus();
-            }
-          }
-          return;
-        }
-
-        // Si presionamos flecha arriba, salir del modo navegación de sub-pestañas
-        if (event.key === 'ArrowUp') {
-          event.preventDefault();
-          setEnModoNavegacionSubPestanas(false);
-          setSubPestanaSeleccionadaIndex(-1);
-          // Enfocar el botón de la pestaña principal
-          const tabButton = document.querySelector('.tabs button.active');
-          if (tabButton) {
-            tabButton.focus();
-          }
-          return;
-        }
-      }
-
-      // Si estamos navegando registros
-      if (enModoNavegacionRegistros && pedidoSeleccionadoIndex >= 0) {
-        // Si estamos en el primer registro y presionamos flecha arriba, volver a sub-pestañas
-        if (event.key === 'ArrowUp' && pedidoSeleccionadoIndex === 0) {
-          event.preventDefault();
-          setEnModoNavegacionRegistros(false);
-          setPedidoSeleccionadoIndex(-1);
-          setEnModoNavegacionSubPestanas(true);
-          setSubPestanaSeleccionadaIndex(0);
-          const firstSubButton = subPestanaButtonRefs.current[0];
-          if (firstSubButton) {
-            firstSubButton.focus();
-          }
-          return;
-        }
-
-        // Navegación arriba/abajo entre registros
-        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-          event.preventDefault();
-          const nuevoIndex = event.key === 'ArrowUp'
-            ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosFiltrados.length - 1)
-            : (pedidoSeleccionadoIndex < pedidosFiltrados.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
-          setPedidoSeleccionadoIndex(nuevoIndex);
-          
-          const pedido = pedidosFiltrados[nuevoIndex];
-          if (pedido) {
-            const pedidoCard = document.querySelector(`[data-pedido-id="${pedido.id}"]`);
-            if (pedidoCard) {
-              pedidoCard.focus();
-            }
-          }
-          return;
-        }
-
-        // Navegación izquierda/derecha entre registros (si hay más de uno)
-        if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && pedidosFiltrados.length > 1) {
-          event.preventDefault();
-          const nuevoIndex = event.key === 'ArrowLeft'
-            ? (pedidoSeleccionadoIndex > 0 ? pedidoSeleccionadoIndex - 1 : pedidosFiltrados.length - 1)
-            : (pedidoSeleccionadoIndex < pedidosFiltrados.length - 1 ? pedidoSeleccionadoIndex + 1 : 0);
-          setPedidoSeleccionadoIndex(nuevoIndex);
-          
-          const pedido = pedidosFiltrados[nuevoIndex];
-          if (pedido) {
-            const pedidoCard = document.querySelector(`[data-pedido-id="${pedido.id}"]`);
-            if (pedidoCard) {
-              pedidoCard.focus();
-            }
-          }
-          return;
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [activeTab, enModoNavegacionSubPestanas, subPestanaSeleccionadaIndex, enModoNavegacionRegistros, pedidoSeleccionadoIndex, pedidos, filtroEtapaPreparacion, textoBusqueda, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal]);
+  }, [activeTab, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal, showModalDetalle, enModoNavegacionDias, enModoNavegacionRegistrosRealizados]);
 
   const cargarUsuarios = async () => {
     try {
@@ -908,12 +814,12 @@ const AdminPanel = () => {
         zonaNombre: formData.zonaNombre && formData.zonaNombre.trim() !== '' ? formData.zonaNombre.trim() : null,
         cantidad: parseInt(formData.cantidad),
         vueltaNombre: formData.vueltaNombre.trim(),
-        prioridad: formData.prioridad
+        fechaEntrega: formData.fechaEntrega || null, // Si no se proporciona, será null y el backend usará hoy
       };
       console.log('Datos a enviar:', dataToSend);
       await pedidoService.crear(dataToSend);
       setShowModal(false);
-      setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', prioridad: 'NORMAL' });
+      setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', fechaEntrega: '' });
       setZonaSugerencias([]);
       setMostrarSugerenciasZona(false);
       setTransportistaSugerencias([]);
@@ -1033,15 +939,6 @@ const AdminPanel = () => {
     }
   };
 
-  const getPrioridadColor = (prioridad) => {
-    const colors = {
-      BAJA: '#4CAF50',
-      NORMAL: '#2196F3',
-      ALTA: '#FF9800',
-      URGENTE: '#F44336',
-    };
-    return colors[prioridad] || '#666';
-  };
 
   const getEstadoTexto = (pedido) => {
     if (pedido.estado === 'REALIZADO') {
@@ -1050,35 +947,19 @@ const AdminPanel = () => {
       if (!pedido.etapaPreparacion) {
         return 'En Preparación'; // Cuando recién pasa a EN_PREPARACION sin etapa
       } else if (pedido.etapaPreparacion === 'CONTROL') {
-        return 'Controlado';
+        // Mostrar estado según si está controlado o no
+        return pedido.controlado ? 'Controlado' : 'Sin Controlar';
       } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
-        return 'Pendiente de Carga';
+        return 'Controlado';
       }
       return 'En Preparación';
     } else if (pedido.estado === 'PENDIENTE') {
       return 'Pendiente';
     }
-    return pedido.estado.replace('_', ' ');
+    return pedido.estado?.replace('_', ' ') || 'Desconocido';
   };
 
   // Función para obtener cantidad de pedidos por etapa de preparación
-  const getCantidadPorEtapa = (etapa) => {
-    if (activeTab !== 'en-preparacion') return 0;
-    const pedidosEnPreparacion = pedidos.filter(p => p.estado === 'EN_PREPARACION');
-    
-    switch (etapa) {
-      case 'TODOS':
-        return pedidosEnPreparacion.length;
-      case 'SIN_CONTROL':
-        return pedidosEnPreparacion.filter(p => !p.etapaPreparacion).length;
-      case 'CONTROL':
-        return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'CONTROL').length;
-      case 'PENDIENTE_CARGA':
-        return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA').length;
-      default:
-        return 0;
-    }
-  };
 
   const getEstadoColor = (pedido) => {
     if (pedido.estado === 'REALIZADO') {
@@ -1087,7 +968,8 @@ const AdminPanel = () => {
       if (!pedido.etapaPreparacion) {
         return '#2196F3'; // Azul para "En Preparación" (sin etapa aún)
       } else if (pedido.etapaPreparacion === 'CONTROL') {
-        return '#2196F3'; // Azul para Control
+        // Rojo para Sin Controlar, Verde para Controlado
+        return pedido.controlado ? '#4CAF50' : '#F44336';
       } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
         return '#FF9800'; // Naranja para Pendiente de Carga
       }
@@ -1112,10 +994,6 @@ const AdminPanel = () => {
     return nuevos.length;
   }, [todosLosPedidos, pedidosRealizadosVistos]);
 
-  // Calcular cantidad de pedidos en preparación
-  const cantidadEnPreparacion = useMemo(() => {
-    return todosLosPedidos.filter(p => p.estado === 'EN_PREPARACION').length;
-  }, [todosLosPedidos]);
 
   // Marcar pedidos realizados como vistos cuando se expande un día
   // NO marcar automáticamente al entrar a la pestaña, solo cuando se ven
@@ -1189,9 +1067,115 @@ const AdminPanel = () => {
     }));
   };
 
+  // Agrupar TODAS las planillas por día (para la pestaña Planillas)
+  const getPlanillasAgrupadasPorDia = () => {
+    if (activeTab !== 'pedidos') return null;
+    
+    const planillasPorDia = {};
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    todasLasPlanillas.forEach(planilla => {
+      // Aplicar filtro de búsqueda si existe
+      if (textoBusqueda.trim()) {
+        const busqueda = textoBusqueda.toLowerCase().trim();
+        const matchPlanilla = planilla.numeroPlanilla?.toLowerCase().includes(busqueda);
+        const matchTransporte = (planilla.transportistaNombre || planilla.transportista || '').toLowerCase().includes(busqueda);
+        const matchZona = (planilla.zonaNombre || '').toLowerCase().includes(busqueda);
+        const matchVuelta = (planilla.vueltaNombre || '').toLowerCase().includes(busqueda);
+        if (!matchPlanilla && !matchTransporte && !matchZona && !matchVuelta) {
+          return; // Saltar esta planilla si no coincide con la búsqueda
+        }
+      }
+      
+      const fechaPlanilla = new Date(planilla.fechaCreacion);
+      fechaPlanilla.setHours(0, 0, 0, 0);
+      
+      const fechaKey = fechaPlanilla.toLocaleDateString('es-AR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+
+      if (!planillasPorDia[fechaKey]) {
+        planillasPorDia[fechaKey] = {
+          fecha: fechaKey,
+          fechaDate: fechaPlanilla,
+          cantidad: 0,
+          esHoy: fechaPlanilla.getTime() === hoy.getTime(),
+          planillas: []
+        };
+      }
+      planillasPorDia[fechaKey].cantidad++;
+      planillasPorDia[fechaKey].planillas.push(planilla);
+    });
+
+    // Ordenar planillas dentro de cada día por fecha de creación descendente
+    Object.values(planillasPorDia).forEach(dia => {
+      dia.planillas.sort((a, b) => {
+        return new Date(b.fechaCreacion) - new Date(a.fechaCreacion);
+      });
+    });
+
+    return Object.values(planillasPorDia).sort((a, b) => {
+      return b.fechaDate - a.fechaDate; // Más recientes primero
+    });
+  };
+
+  // Función para abrir modal de Transportistas y Vueltas
+  const abrirModalTransportistasVueltas = async () => {
+    setShowModalTransportistasVueltas(true);
+    setLoadingTransportistasVueltas(true);
+    try {
+      const response = await pedidoService.obtenerTransportistasVueltasDelDia();
+      setTransportistasVueltas(response.data || []);
+      
+      // Expandir automáticamente la fecha actual
+      const hoy = new Date().toISOString().split('T')[0];
+      setFechasExpandidas(new Set([hoy]));
+    } catch (err) {
+      console.error('Error al cargar transportistas y vueltas:', err);
+    } finally {
+      setLoadingTransportistasVueltas(false);
+    }
+  };
+
+  const toggleFechaExpandida = (fecha) => {
+    setFechasExpandidas(prev => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(fecha)) {
+        nuevo.delete(fecha);
+      } else {
+        nuevo.add(fecha);
+      }
+      return nuevo;
+    });
+  };
+
+  const cerrarModalTransportistasVueltas = () => {
+    setShowModalTransportistasVueltas(false);
+    setTransportistasVueltas([]);
+    setFechasExpandidas(new Set());
+  };
+
   // Usar useMemo para estabilizar pedidosAgrupadosPorDia
   const pedidosAgrupadosPorDia = useMemo(() => getPedidosAgrupadosPorDia(), [activeTab, pedidos, textoBusqueda]);
   const pedidosPorDia = useMemo(() => getPedidosPorDia(), [activeTab, pedidos]);
+  
+  // Usar useMemo para estabilizar planillas agrupadas por día
+  const planillasAgrupadasPorDia = useMemo(() => getPlanillasAgrupadasPorDia(), [activeTab, todasLasPlanillas, textoBusqueda]);
+  
+  // Expandir "Hoy" por defecto cuando se carga la pestaña de Planillas
+  useEffect(() => {
+    if (activeTab === 'pedidos' && planillasAgrupadasPorDia && planillasAgrupadasPorDia.length > 0) {
+      const hoy = planillasAgrupadasPorDia.find(dia => dia.esHoy);
+      if (hoy && !diasExpandidosPlanillas.has(hoy.fecha)) {
+        setDiasExpandidosPlanillas(prev => new Set([...prev, hoy.fecha]));
+      }
+    } else if (activeTab !== 'pedidos') {
+      setDiasExpandidosPlanillas(new Set());
+    }
+  }, [activeTab, planillasAgrupadasPorDia]);
 
   // Estabilizar la longitud para evitar cambios en el array de dependencias
   const pedidosAgrupadosPorDiaLength = pedidosAgrupadosPorDia?.length ?? 0;
@@ -1232,7 +1216,7 @@ const AdminPanel = () => {
 
     const handleKeyDown = (event) => {
       // No navegar si hay un modal abierto
-      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal) {
+      if (showModal || showUsuarioModal || showTransportistaModal || showZonaModal || showVueltaModal || showResumenModal || showModalDetalle) {
         return;
       }
 
@@ -1385,7 +1369,7 @@ const AdminPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [activeTab, enModoNavegacionDias, diaSeleccionadoIndex, enModoNavegacionRegistrosRealizados, pedidoSeleccionadoIndexRealizados, diasExpandidos, pedidosAgrupadosPorDiaLength, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal]);
+  }, [activeTab, enModoNavegacionDias, diaSeleccionadoIndex, enModoNavegacionRegistrosRealizados, pedidoSeleccionadoIndexRealizados, diasExpandidos, pedidosAgrupadosPorDiaLength, showModal, showUsuarioModal, showTransportistaModal, showZonaModal, showVueltaModal, showResumenModal, showModalDetalle]);
 
   const toggleDia = (fecha) => {
     setDiasExpandidos(prev => {
@@ -1423,6 +1407,65 @@ const AdminPanel = () => {
             return nuevoSet;
           });
         }
+      }
+      return nuevo;
+    });
+  };
+
+  const toggleDiaPlanillas = (fecha) => {
+    setDiasExpandidosPlanillas(prev => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(fecha)) {
+        nuevo.delete(fecha);
+      } else {
+        nuevo.add(fecha);
+      }
+      return nuevo;
+    });
+  };
+
+  const abrirModalDetalle = (planilla) => {
+    setPedidoSeleccionado(planilla);
+    setShowModalDetalle(true);
+  };
+
+  const cerrarModalDetalle = () => {
+    setShowModalDetalle(false);
+    setPedidoSeleccionado(null);
+  };
+
+  // Función para determinar si una planilla coincide con el filtro de estado
+  const coincideConFiltro = (planilla, filtro) => {
+    if (!filtro) return true; // Sin filtro = mostrar todas
+    
+    switch (filtro) {
+      case 'PENDIENTE':
+        return planilla.estado === 'PENDIENTE';
+      case 'EN_PREPARACION':
+        return planilla.estado === 'EN_PREPARACION' && !planilla.etapaPreparacion;
+      case 'CONTROL':
+        return planilla.estado === 'EN_PREPARACION' && 
+               planilla.etapaPreparacion === 'CONTROL';
+      case 'PENDIENTE_CARGA':
+        return planilla.estado === 'EN_PREPARACION' && 
+               planilla.etapaPreparacion === 'PENDIENTE_CARGA';
+      case 'FINALIZADO':
+        return planilla.estado === 'REALIZADO';
+      default:
+        return true;
+    }
+  };
+
+  // Función para cambiar el filtro de estado para un día específico
+  const cambiarFiltroEstado = (fecha, filtro) => {
+    setFiltroEstadoPorDia(prev => {
+      const nuevo = new Map(prev);
+      // Si el filtro es el mismo que el activo, desactivarlo (mostrar todas)
+      const filtroActual = nuevo.get(fecha);
+      if (filtroActual === filtro) {
+        nuevo.delete(fecha);
+      } else {
+        nuevo.set(fecha, filtro);
       }
       return nuevo;
     });
@@ -1489,65 +1532,7 @@ const AdminPanel = () => {
           className={activeTab === 'pedidos' ? 'active' : ''}
           onClick={() => setActiveTab('pedidos')}
         >
-          Pedidos
-        </button>
-        <button
-          className={activeTab === 'en-preparacion' ? 'active' : ''}
-          onClick={() => setActiveTab('en-preparacion')}
-          style={{ position: 'relative' }}
-        >
-          En Preparación
-          {cantidadEnPreparacion > 0 && (
-            <span
-              style={{
-                position: 'absolute',
-                top: '-8px',
-                right: '-8px',
-                backgroundColor: '#F44336',
-                color: 'white',
-                borderRadius: '50%',
-                width: '24px',
-                height: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-              }}
-            >
-              {cantidadEnPreparacion}
-            </span>
-          )}
-        </button>
-        <button
-          className={activeTab === 'realizados' ? 'active' : ''}
-          onClick={() => setActiveTab('realizados')}
-          style={{ position: 'relative' }}
-        >
-          Realizados
-          {cantidadNuevosRealizados > 0 && (
-            <span
-              style={{
-                position: 'absolute',
-                top: '-8px',
-                right: '-8px',
-                backgroundColor: '#F44336',
-                color: 'white',
-                borderRadius: '50%',
-                width: '24px',
-                height: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px',
-                fontWeight: 'bold',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-              }}
-            >
-              {cantidadNuevosRealizados}
-            </span>
-          )}
+          Planillas
         </button>
         <button
           className={activeTab === 'transportistas' ? 'active' : ''}
@@ -1609,7 +1594,7 @@ const AdminPanel = () => {
                 color: '#1e293b',
                 letterSpacing: '-0.02em'
               }}>
-                Pendientes
+                Planillas
               </h2>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1678,6 +1663,31 @@ const AdminPanel = () => {
                 )}
               </div>
             <button
+              onClick={abrirModalTransportistasVueltas}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#059669';
+                e.target.style.transform = 'translateY(-1px)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = '#10b981';
+                e.target.style.transform = 'translateY(0)';
+              }}
+            >
+              🚚 Transportes y Vueltas
+            </button>
+            <button
               onClick={() => setShowModal(true)}
               style={{
                 padding: '10px 20px',
@@ -1704,176 +1714,340 @@ const AdminPanel = () => {
             </button>
             </div>
           </div>
-          <div className="pedidos-grid">
-            {pedidos.filter(pedido => {
-              if (pedido.estado !== 'PENDIENTE') return false;
-              
-              // Aplicar filtro de búsqueda si existe
-              if (textoBusqueda.trim()) {
-                const busqueda = textoBusqueda.toLowerCase().trim();
-                const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
-                const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
-                const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
-                const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
-                return matchPlanilla || matchTransporte || matchZona || matchVuelta;
-              }
-              return true;
-            }).map((pedido) => (
-              <div key={pedido.id} className="pedido-card admin-pedido-card">
-                <div className="pedido-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {planillasAgrupadasPorDia && planillasAgrupadasPorDia.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {planillasAgrupadasPorDia.map((dia, index) => (
+                <div
+                  key={dia.fecha}
+                  style={{
+                    backgroundColor: 'white',
+                    borderRadius: '8px',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
+                    overflow: 'hidden',
+                    border: '1px solid #E0E0E0',
+                  }}
+                >
+                  {/* Encabezado del día - clickeable para expandir/colapsar */}
+                  <div
+                    tabIndex={0}
+                    onClick={() => toggleDiaPlanillas(dia.fecha)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleDiaPlanillas(dia.fecha);
+                      }
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '15px 20px',
+                      backgroundColor: dia.esHoy ? '#E3F2FD' : '#FFFFFF',
+                      border: dia.esHoy ? '2px solid #2196F3' : '2px solid #E0E0E0',
+                      borderBottom: dia.esHoy ? '2px solid #2196F3' : '2px solid #BDBDBD',
+                      borderRadius: '8px 8px 0 0',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      transition: 'all 0.2s ease',
+                      boxShadow: dia.esHoy ? '0 2px 4px rgba(33, 150, 243, 0.2)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '15px',
+                        flex: 1,
+                      }}
+                    >
+                      <span style={{ fontSize: '1.2rem' }}>
+                        {diasExpandidosPlanillas.has(dia.fecha) ? '▼' : '▶'}
+                  </span>
+                      <div>
+                  <div style={{
+                          fontSize: '1rem',
+                          fontWeight: 'bold',
+                          color: '#333',
+                        }}>
+                          {dia.esHoy ? '📅 Hoy' : dia.fecha}
+                      </div>
+                      <div style={{ 
+                        fontSize: '0.9rem', 
+                  color: '#666',
+                }}>
+                          {dia.cantidad} {dia.cantidad === 1 ? 'planilla' : 'planillas'}
+              </div>
+          </div>
+        </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      {/* Botones de filtro por estado */}
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {[
+                          { key: 'PENDIENTE', label: 'Pendiente' },
+                          { key: 'EN_PREPARACION', label: 'En Preparación' },
+                          { key: 'CONTROL', label: 'Control' },
+                          { key: 'PENDIENTE_CARGA', label: 'Pendiente de Carga' },
+                          { key: 'FINALIZADO', label: 'Finalizado' }
+                        ].map(({ key, label }) => {
+                          const filtroActivo = filtroEstadoPorDia.get(dia.fecha);
+                          const estaActivo = filtroActivo === key;
+                          const cantidadFiltrada = dia.planillas.filter(p => coincideConFiltro(p, key)).length;
+                          
+                          return (
+                <button
+                              key={key}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                cambiarFiltroEstado(dia.fecha, key);
+                              }}
+                  style={{
+                                padding: '6px 12px',
+                                backgroundColor: estaActivo ? '#1e40af' : '#f3f4f6',
+                                color: estaActivo ? 'white' : '#6b7280',
+                                border: estaActivo ? 'none' : '1px solid #e5e7eb',
+                                borderRadius: '6px',
+                    cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: estaActivo ? '600' : '500',
+                    transition: 'all 0.2s',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                  }}
+                  onMouseEnter={(e) => {
+                                if (!estaActivo) {
+                      e.target.style.backgroundColor = '#e5e7eb';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                                if (!estaActivo) {
+                      e.target.style.backgroundColor = '#f3f4f6';
+                    }
+                  }}
+                            >
+                              {label}
+                              {cantidadFiltrada > 0 && (
+                                <span style={{
+                                  backgroundColor: estaActivo ? 'rgba(255,255,255,0.3)' : '#d1d5db',
+                                  color: estaActivo ? 'white' : '#6b7280',
+                                  borderRadius: '10px',
+                                  padding: '2px 6px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: '600',
+                                  minWidth: '18px',
+                                  textAlign: 'center',
+                                }}>
+                                  {cantidadFiltrada}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                  </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPedidosResumen(dia.planillas);
+                          setFechaResumen(dia.esHoy ? 'Hoy' : dia.fecha);
+                          setShowResumenModal(true);
+                        }}
+                      style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#1e40af',
+                        color: 'white',
+                          border: 'none',
+                          borderRadius: '5px',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem',
+                        fontWeight: 'bold',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a8a'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = '#1e40af'}
+                    >
+                        📊 Resumen
+                </button>
+            </div>
+                  </div>
+                  
+                  {/* Planillas del día - solo se muestran si está expandido */}
+                  {diasExpandidosPlanillas.has(dia.fecha) && (() => {
+                    const filtroActivo = filtroEstadoPorDia.get(dia.fecha);
+                    const planillasFiltradas = filtroActivo 
+                      ? dia.planillas.filter(p => coincideConFiltro(p, filtroActivo))
+                      : dia.planillas;
+                    
+                    return (
+            <div style={{
+                        padding: '20px',
+                        backgroundColor: '#f8fafc',
+                        backgroundImage: 'linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)',
+                    display: 'grid',
+                        gridTemplateColumns: 'repeat(2, 1fr)',
+                        gap: '16px'
+                      }}>
+                        {planillasFiltradas.length === 0 ? (
+                          <div style={{
+                            gridColumn: '1 / -1',
+                            textAlign: 'center',
+                            padding: '40px 20px',
+                            color: '#6b7280',
+                  fontSize: '0.95rem',
+                          }}>
+                            No hay planillas con el filtro seleccionado
+                    </div>
+                        ) : (
+                          planillasFiltradas.map((planilla) => {
+                        return (
+                          <div 
+                            key={planilla.id} 
+                  style={{
+                              backgroundColor: 'white',
+                              borderRadius: '10px',
+                              border: '1px solid #e2e8f0',
+                              overflow: 'hidden',
+                              boxShadow: '0 2px 6px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06)',
+                              transition: 'all 0.3s ease',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                              e.currentTarget.style.transform = 'translateY(-2px)';
+                              e.currentTarget.style.boxShadow = '0 8px 16px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.08)';
+                              e.currentTarget.style.borderColor = '#cbd5e1';
+                  }}
+                  onMouseLeave={(e) => {
+                              e.currentTarget.style.transform = 'translateY(0)';
+                              e.currentTarget.style.boxShadow = '0 2px 6px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06)';
+                              e.currentTarget.style.borderColor = '#e2e8f0';
+                            }}
+                          >
+                            {/* Vista compacta */}
+                            <div
+                style={{
+                                padding: '12px 16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '12px',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
                     <div style={{
-                      width: '48px',
-                      height: '48px',
-                      borderRadius: '12px',
+                                  width: '40px',
+                                  height: '40px',
+                      borderRadius: '8px',
                       background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: '1.5rem',
+                                  fontSize: '1.2rem',
                       color: 'white',
                       fontWeight: '700',
-                      boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
+                                  flexShrink: 0,
                     }}>
                       📋
                     </div>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
-                        {pedido.numeroPlanilla}
-                      </h3>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ 
+                                    fontSize: '1.1rem', 
+                                    fontWeight: '700', 
+                                    color: '#1e293b',
+                        marginBottom: '4px'
+                      }}>
+                                    {planilla.numeroPlanilla}
+                      </div>
                       <div style={{ 
                         fontSize: '0.85rem', 
                         color: '#64748b', 
-                        marginTop: '4px',
                         display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })}</span>
+                                    flexWrap: 'wrap',
+                                    gap: '6px'
+                                  }}>
+                                    <span>🚚 {planilla.transportistaNombre || planilla.transportista || 'Sin transporte'}</span>
+                                    {planilla.vueltaNombre && <span>• {planilla.vueltaNombre}</span>}
+                                    {planilla.cantidad && <span>• {planilla.cantidad} total</span>}
                       </div>
                     </div>
                   </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <span
-                    className="prioridad-badge"
-                    style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
-                  >
-                    {pedido.prioridad}
+                                  style={{
+                                    backgroundColor: getEstadoColor(planilla),
+                                    color: 'white',
+                                    padding: '4px 10px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: '600',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {getEstadoTexto(planilla)}
                   </span>
-                </div>
-                
-                <div className="pedido-info">
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '16px',
-                    marginBottom: '16px'
-                  }}>
-                    <div className="info-item">
-                      <div className="info-label">🚚 Transporte</div>
-                      <div className="info-value">
-                        {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
-                      </div>
-                    </div>
-                    {pedido.cantidad && (
-                      <div className="info-item">
-                        <div className="info-label">📊 Cantidad</div>
-                        <div className="info-value">{pedido.cantidad}</div>
-                      </div>
-                    )}
-                      </div>
-                  
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '16px',
-                    marginBottom: '16px'
-                  }}>
-                    {pedido.zonaNombre && (
-                      <div className="info-item">
-                        <div className="info-label">📍 Zona</div>
-                        <div className="info-value">{pedido.zonaNombre}</div>
-                      </div>
-                    )}
-                    {pedido.vueltaNombre && (
-                      <div className="info-item">
-                        <div className="info-label">🔄 Vuelta</div>
-                        <div className="info-value">{pedido.vueltaNombre}</div>
-                  </div>
-                    )}
-                  </div>
-                  
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '16px',
-                    marginBottom: '16px'
-                  }}>
-                    <div className="info-item">
-                      <div className="info-label">👥 Equipo</div>
-                      <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
-                    </div>
-                    <div className="info-item">
-                      <div className="info-label">📋 Estado</div>
-                    <span
-                      className="estado-badge"
-                      style={{ backgroundColor: getEstadoColor(pedido) }}
-                    >
-                      {getEstadoTexto(pedido)}
-                    </span>
-                    </div>
-                  </div>
-                  
-                  {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
-                    <div style={{
-                      padding: '12px',
-                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                      borderRadius: '8px',
-                      border: '1px solid #86efac',
-                      marginTop: '8px'
-                    }}>
-                      <div style={{ 
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <button
+                                    onClick={() => abrirModalDetalle(planilla)}
+                                    style={{
+                                      padding: '6px 12px',
+                                      backgroundColor: '#2196F3',
+                                      color: 'white',
+                                      border: 'none',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
                         fontSize: '0.85rem', 
                         fontWeight: '600', 
-                        color: '#166534',
-                        marginBottom: '4px'
-                      }}>
-                        ✅ Finalizado
-                      </div>
-                      <div style={{ 
-                        fontSize: '0.9rem', 
-                        color: '#15803d',
-                        fontWeight: '500'
-                      }}>
-                        {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
-                          year: 'numeric',
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-                {pedido.estado === 'PENDIENTE' && (
-                  <div className="pedido-actions">
-                    <button
-                      className="btn-danger"
-                      onClick={() => handleEliminarPedido(pedido.id)}
+                                      width: '100%',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.backgroundColor = '#1976D2';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.backgroundColor = '#2196F3';
+                                    }}
+                                  >
+                                    👁️ Ver
+                                  </button>
+                                  {planilla.estado === 'PENDIENTE' && (
+                                    <button
+                                      onClick={() => handleEliminarPedido(planilla.id)}
+                                      style={{
+                                        padding: '6px 12px',
+                                        backgroundColor: '#f3f4f6',
+                                        color: '#6b7280',
+                                        border: '1px solid #e5e7eb',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                        fontSize: '0.85rem', 
+                        fontWeight: '600', 
+                                        width: '100%',
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#e5e7eb';
+                                        e.currentTarget.style.color = '#dc2626';
+                                        e.currentTarget.style.borderColor = '#dc2626';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#f3f4f6';
+                                        e.currentTarget.style.color = '#6b7280';
+                                        e.currentTarget.style.borderColor = '#e5e7eb';
+                                      }}
                     >
                       🗑️ Eliminar
                     </button>
-                  </div>
-                )}
+                                  )}
+                      </div>
+                      </div>
+                    </div>
+                </div>
+                        );
+                      }))}
+                      </div>
+                    );
+                  })()}
               </div>
             ))}
-            {pedidos.length === 0 && (
+            </div>
+          )}
+
+          {(!planillasAgrupadasPorDia || planillasAgrupadasPorDia.length === 0) && (
               <div className="no-pedidos" style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -1896,7 +2070,7 @@ const AdminPanel = () => {
                   color: '#333',
                   margin: '0 0 10px 0',
                 }}>
-                  No hay pedidos registrados
+                No hay planillas registradas
                 </h3>
                 <p style={{
                   fontSize: '1rem',
@@ -1904,436 +2078,13 @@ const AdminPanel = () => {
                   margin: '0',
                   maxWidth: '400px',
                 }}>
-                  Crea tu primer pedido usando el botón "Nuevo Pedido" para comenzar.
+                Crea tu primera planilla usando el botón "Nuevo Pedido" para comenzar.
                 </p>
               </div>
             )}
-          </div>
         </div>
       )}
 
-      {activeTab === 'en-preparacion' && (
-        <div className="content-section">
-          {/* Contenedor con sub-pestañas y buscador para En Preparación */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '20px',
-            padding: '20px 40px',
-            margin: '0 20px 25px 20px',
-            background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
-            border: '1px solid #e2e8f0',
-            borderRadius: '12px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
-          }}>
-            {/* Sub-pestañas de filtro */}
-            <div style={{ display: 'flex', gap: '10px', flex: 1 }}>
-              {['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'].map((filtro, index) => (
-                <button
-                  key={filtro}
-                  ref={(el) => { if (el) subPestanaButtonRefs.current[index] = el; }}
-                  onClick={() => setFiltroEtapaPreparacion(filtro)}
-                  style={{
-                    padding: '10px 20px',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '0.95rem',
-                    fontWeight: filtroEtapaPreparacion === filtro ? '600' : '500',
-                    backgroundColor: filtroEtapaPreparacion === filtro ? '#2196F3' : '#f3f4f6',
-                    color: filtroEtapaPreparacion === filtro ? 'white' : '#666',
-                    transition: 'all 0.2s',
-                    position: 'relative',
-                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === index ? '3px solid #2196F3' : 'none',
-                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === index ? '2px' : '0',
-                  }}
-                  onMouseEnter={(e) => {
-                    // Solo cambiar el color si el botón NO está activo
-                    if (filtroEtapaPreparacion !== filtro) {
-                      e.target.style.backgroundColor = '#e5e7eb';
-                    }
-                    // Si está activo, no hacer nada (mantener el color del style prop)
-                  }}
-                  onMouseLeave={(e) => {
-                    // Restaurar el color basado en el estado actual
-                    if (filtroEtapaPreparacion === filtro) {
-                      // Si está activo, mantener el color activo
-                      e.target.style.backgroundColor = '#2196F3';
-                    } else {
-                      // Si NO está activo, restaurar el color inactivo
-                      e.target.style.backgroundColor = '#f3f4f6';
-                    }
-                  }}
-                  onFocus={() => {
-                    setEnModoNavegacionSubPestanas(true);
-                    setSubPestanaSeleccionadaIndex(index);
-                  }}
-                >
-                  {filtro === 'TODOS' ? 'Todos' :
-                   filtro === 'SIN_CONTROL' ? 'Sin Control' :
-                   filtro === 'CONTROL' ? 'Control' :
-                   'Pendiente de Carga'}
-                  {getCantidadPorEtapa(filtro) > 0 && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: '-8px',
-                        right: '-8px',
-                        backgroundColor: '#F44336',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: '24px',
-                        height: '24px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                      }}
-                    >
-                      {getCantidadPorEtapa(filtro)}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-            {/* Buscador */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              flex: '0 0 400px',
-              position: 'relative'
-            }}>
-              <span style={{ fontSize: '1.2rem' }}>🔍</span>
-              <input
-                type="text"
-                data-search-input="true"
-                placeholder="Buscar por planilla, transporte, zona, vuelta..."
-                value={textoBusqueda}
-                onChange={(e) => setTextoBusqueda(e.target.value)}
-                onKeyDown={(e) => {
-                  // Detener la propagación para que los listeners globales no interfieran
-                  e.stopPropagation();
-                }}
-                onKeyPress={(e) => {
-                  // Detener la propagación para que los listeners globales no interfieran
-                  e.stopPropagation();
-                }}
-                style={{
-                  flex: 1,
-                  padding: '10px 15px',
-                  border: '2px solid #e0e0e0',
-                  borderRadius: '8px',
-                  fontSize: '0.95rem',
-                  outline: 'none',
-                  transition: 'all 0.2s',
-                }}
-                onFocus={(e) => {
-                  e.target.style.borderColor = '#2196F3';
-                  e.target.style.boxShadow = '0 0 0 3px rgba(33, 150, 243, 0.1)';
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = '#e0e0e0';
-                  e.target.style.boxShadow = 'none';
-                }}
-              />
-              {textoBusqueda && (
-                <button
-                  onClick={() => setTextoBusqueda('')}
-                  style={{
-                    padding: '8px 12px',
-                    border: 'none',
-                    borderRadius: '6px',
-                    backgroundColor: '#f3f4f6',
-                    color: '#666',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.backgroundColor = '#e5e7eb';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.backgroundColor = '#f3f4f6';
-                  }}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Grid de pedidos en preparación */}
-          <div className="pedidos-grid">
-            {pedidos.filter(pedido => {
-              if (pedido.estado !== 'EN_PREPARACION') return false;
-              
-              // Aplicar filtro de etapa
-              if (filtroEtapaPreparacion === 'TODOS') {
-                // Todos los pedidos en preparación
-              } else if (filtroEtapaPreparacion === 'SIN_CONTROL') {
-                if (pedido.etapaPreparacion) return false;
-              } else if (filtroEtapaPreparacion === 'CONTROL') {
-                if (pedido.etapaPreparacion !== 'CONTROL') return false;
-              } else if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') {
-                if (pedido.etapaPreparacion !== 'PENDIENTE_CARGA') return false;
-              }
-              
-              // Aplicar filtro de búsqueda si existe
-              if (textoBusqueda.trim()) {
-                const busqueda = textoBusqueda.toLowerCase().trim();
-                const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
-                const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
-                const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
-                const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
-                return matchPlanilla || matchTransporte || matchZona || matchVuelta;
-              }
-              return true;
-            }).map((pedido, index) => (
-              <div 
-                key={pedido.id} 
-                className="pedido-card admin-pedido-card"
-                data-pedido-id={pedido.id}
-                tabIndex={0}
-                style={{
-                  outline: enModoNavegacionRegistros && pedidoSeleccionadoIndex === index ? '3px solid #2196F3' : 'none',
-                  outlineOffset: enModoNavegacionRegistros && pedidoSeleccionadoIndex === index ? '2px' : '0',
-                }}
-                onFocus={() => {
-                  setEnModoNavegacionRegistros(true);
-                  setPedidoSeleccionadoIndex(index);
-                }}
-              >
-                <div className="pedido-header">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <div style={{
-                      width: '48px',
-                      height: '48px',
-                      borderRadius: '12px',
-                      background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '1.5rem',
-                      color: 'white',
-                      fontWeight: '700',
-                      boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
-                    }}>
-                      📋
-                    </div>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
-                        {pedido.numeroPlanilla}
-                      </h3>
-                      <div style={{ 
-                        fontSize: '0.85rem', 
-                        color: '#64748b', 
-                        marginTop: '4px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <span
-                    className="prioridad-badge"
-                    style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
-                  >
-                    {pedido.prioridad}
-                  </span>
-                </div>
-                
-                <div className="pedido-info">
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '16px',
-                    marginBottom: '16px'
-                  }}>
-                    <div className="info-item">
-                      <div className="info-label">🚚 Transporte</div>
-                      <div className="info-value">
-                        {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
-                      </div>
-                    </div>
-                    {pedido.cantidad && (
-                      <div className="info-item">
-                        <div className="info-label">📊 Cantidad</div>
-                        <div className="info-value">{pedido.cantidad}</div>
-                      </div>
-                    )}
-                      </div>
-                  
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '16px',
-                    marginBottom: '16px'
-                  }}>
-                    {pedido.zonaNombre && (
-                      <div className="info-item">
-                        <div className="info-label">📍 Zona</div>
-                        <div className="info-value">{pedido.zonaNombre}</div>
-                      </div>
-                    )}
-                    {pedido.vueltaNombre && (
-                      <div className="info-item">
-                        <div className="info-label">🔄 Vuelta</div>
-                        <div className="info-value">{pedido.vueltaNombre}</div>
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '16px',
-                    marginBottom: '16px'
-                  }}>
-                    <div className="info-item">
-                      <div className="info-label">👥 Equipo</div>
-                      <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
-                    </div>
-                    <div className="info-item">
-                      <div className="info-label">📋 Estado</div>
-                      <span
-                        className="estado-badge"
-                        style={{ backgroundColor: getEstadoColor(pedido) }}
-                      >
-                        {getEstadoTexto(pedido)}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {pedido.etapaPreparacion === 'PENDIENTE_CARGA' && pedido.fechaActualizacion && (
-                    <div style={{
-                      padding: '12px',
-                      background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
-                      borderRadius: '8px',
-                      border: '1px solid #ffb74d',
-                      marginTop: '8px',
-                      marginBottom: '8px'
-                    }}>
-                      <div style={{ 
-                        fontSize: '0.85rem', 
-                        fontWeight: '600', 
-                        color: '#E65100',
-                        marginBottom: '4px'
-                      }}>
-                        📋 Pendiente de Carga
-                      </div>
-                      <div style={{ 
-                        fontSize: '0.9rem', 
-                        color: '#F57C00',
-                        fontWeight: '500'
-                      }}>
-                        {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
-                          year: 'numeric',
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
-                    <div style={{
-                      padding: '12px',
-                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                      borderRadius: '8px',
-                      border: '1px solid #86efac',
-                      marginTop: '8px'
-                    }}>
-                      <div style={{ 
-                        fontSize: '0.85rem', 
-                        fontWeight: '600', 
-                        color: '#166534',
-                        marginBottom: '4px'
-                      }}>
-                        ✅ Finalizado
-                      </div>
-                      <div style={{ 
-                        fontSize: '0.9rem', 
-                        color: '#15803d',
-                        fontWeight: '500'
-                      }}>
-                        {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
-                          year: 'numeric',
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-            {pedidos.filter(pedido => {
-              if (pedido.estado !== 'EN_PREPARACION') return false;
-              if (filtroEtapaPreparacion === 'TODOS') return true;
-              if (filtroEtapaPreparacion === 'SIN_CONTROL') return !pedido.etapaPreparacion;
-              if (filtroEtapaPreparacion === 'CONTROL') return pedido.etapaPreparacion === 'CONTROL';
-              if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') return pedido.etapaPreparacion === 'PENDIENTE_CARGA';
-              return true;
-            }).length === 0 && (
-              <div className="no-pedidos" style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '60px 20px',
-                textAlign: 'center',
-                minHeight: '300px',
-              }}>
-                <div style={{
-                  fontSize: '4rem',
-                  marginBottom: '20px',
-                  opacity: 0.3,
-                }}>
-                  ⚙️
-                </div>
-                <h3 style={{
-                  fontSize: '1.5rem',
-                  fontWeight: '600',
-                  color: '#333',
-                  margin: '0 0 10px 0',
-                }}>
-                  {filtroEtapaPreparacion === 'TODOS' 
-                    ? 'No hay pedidos en preparación' 
-                    : filtroEtapaPreparacion === 'SIN_CONTROL'
-                    ? 'No hay pedidos sin control'
-                    : filtroEtapaPreparacion === 'CONTROL'
-                    ? 'No hay pedidos en control'
-                    : 'No hay pedidos pendientes de carga'}
-                </h3>
-                <p style={{
-                  fontSize: '1rem',
-                  color: '#666',
-                  margin: '0',
-                  maxWidth: '400px',
-                }}>
-                  Los pedidos que estén siendo preparados aparecerán en esta sección.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {activeTab === 'realizados' && (
         <div className="content-section">
@@ -2624,12 +2375,6 @@ const AdminPanel = () => {
                                 </div>
                               </div>
                             </div>
-                            <span
-                              className="prioridad-badge"
-                              style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
-                            >
-                              {pedido.prioridad}
-                            </span>
                           </div>
                           
                           <div className="pedido-info">
@@ -2714,7 +2459,7 @@ const AdminPanel = () => {
                                       color: '#E65100',
                                       marginBottom: '4px'
                                     }}>
-                                      📋 Pend. de Carga
+                                      ✅ Controlado
                                     </div>
                                     <div style={{ 
                                       fontSize: '0.9rem', 
@@ -3369,7 +3114,7 @@ const AdminPanel = () => {
       {showModal && (
         <div className="modal-overlay" onClick={() => {
           setShowModal(false);
-          setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', prioridad: 'NORMAL' });
+          setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', fechaEntrega: '' });
           setZonaSugerencias([]);
           setMostrarSugerenciasZona(false);
           setTransportistaSugerencias([]);
@@ -3574,7 +3319,7 @@ const AdminPanel = () => {
                     if (e.key === 'Enter') {
                       // Si hay sugerencias en la lista, seleccionar una
                       if (mostrarSugerenciasTransportista && transportistaSugerencias.length > 0) {
-                        e.preventDefault();
+                      e.preventDefault();
                         e.stopPropagation();
                         if (indiceTransportistaSeleccionada >= 0 && indiceTransportistaSeleccionada < transportistaSugerencias.length) {
                           seleccionarTransportista(transportistaSugerencias[indiceTransportistaSeleccionada]);
@@ -3947,7 +3692,6 @@ const AdminPanel = () => {
                     )}
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div className="form-group" style={{ marginBottom: 0, position: 'relative' }}>
                     <label style={{ 
                       display: 'block',
@@ -3968,7 +3712,12 @@ const AdminPanel = () => {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
-                          prioridadRef.current?.focus();
+                          // Ir al campo de fecha de entrega en lugar de enviar el formulario
+                          setTimeout(() => {
+                            if (fechaEntregaRef.current) {
+                              fechaEntregaRef.current.focus();
+                            }
+                          }, 100);
                         }
                       }}
                       required
@@ -4010,13 +3759,24 @@ const AdminPanel = () => {
                       fontWeight: '600',
                       fontSize: '0.95rem'
                     }}>
-                      Prioridad
+                      Fecha de Entrega
+                      <span style={{ 
+                        fontSize: '0.85rem', 
+                        color: '#666', 
+                        fontWeight: '400',
+                        marginLeft: '6px'
+                      }}>
+                        (opcional, por defecto hoy)
+                      </span>
                     </label>
-                <select
-                  ref={prioridadRef}
-                  value={formData.prioridad}
-                  onChange={(e) => setFormData({ ...formData, prioridad: e.target.value })}
+                    <input
+                      ref={fechaEntregaRef}
+                      type="date"
+                      value={formData.fechaEntrega || ''}
+                      onChange={(e) => setFormData({ ...formData, fechaEntrega: e.target.value })}
+                      min={new Date().toISOString().split('T')[0]} // No permitir fechas pasadas
                   onKeyDown={(e) => {
+                        // Solo manejar Enter aquí, las flechas las maneja el useEffect
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
@@ -4044,13 +3804,7 @@ const AdminPanel = () => {
                       e.target.style.borderColor = '#e5e7eb';
                       e.target.style.boxShadow = 'none';
                     }}
-                  >
-                    <option value="BAJA">🟢 Baja</option>
-                    <option value="NORMAL">🟡 Normal</option>
-                    <option value="ALTA">🟠 Alta</option>
-                    <option value="URGENTE">🔴 Urgente</option>
-                </select>
-              </div>
+                    />
                 </div>
               </div>
               
@@ -4067,7 +3821,7 @@ const AdminPanel = () => {
                   type="button"
                   onClick={() => {
                     setShowModal(false);
-                    setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', prioridad: 'NORMAL' });
+                    setFormData({ numeroPlanilla: '', transportistaNombre: '', zonaNombre: '', cantidad: '', vueltaNombre: '', fechaEntrega: '' });
                     setZonaSugerencias([]);
                     setMostrarSugerenciasZona(false);
                     setTransportistaSugerencias([]);
@@ -4480,6 +4234,618 @@ const AdminPanel = () => {
           }}
           rolDestinatario={user?.rol === 'ADMIN' ? 'DEPOSITO' : 'ADMIN'}
         />
+      )}
+
+      {/* Modal de Detalles de Planilla */}
+      {showModalDetalle && pedidoSeleccionado && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={cerrarModalDetalle}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              padding: '24px',
+              maxWidth: '600px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '700', color: '#1e293b' }}>
+                Detalles de la Planilla
+              </h2>
+              <button
+                onClick={cerrarModalDetalle}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#666',
+                  padding: '0',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="pedido-card" style={{ marginBottom: '0' }}>
+              <div className="pedido-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.5rem',
+                    color: 'white',
+                    fontWeight: '700',
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)'
+                  }}>
+                    📋
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: '700', color: '#1e293b' }}>
+                      {pedidoSeleccionado.numeroPlanilla}
+                    </h3>
+                    <div style={{
+                      fontSize: '0.85rem',
+                      color: '#64748b',
+                      marginTop: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <span>🕐 {pedidoSeleccionado.fechaCreacion && new Date(pedidoSeleccionado.fechaCreacion).toLocaleTimeString('es-AR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                      })}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pedido-info">
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '16px',
+                  marginBottom: '16px'
+                }}>
+                  <div className="info-item">
+                    <div className="info-label">🚚 Transporte</div>
+                    <div className="info-value">
+                      {pedidoSeleccionado.transportistaNombre || pedidoSeleccionado.transportista || 'Sin transporte'}
+                    </div>
+                  </div>
+                  {pedidoSeleccionado.cantidad && (
+                    <div className="info-item">
+                      <div className="info-label">📊 Cantidad</div>
+                      <div className="info-value">{pedidoSeleccionado.cantidad}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '16px',
+                  marginBottom: '16px'
+                }}>
+                  {pedidoSeleccionado.zonaNombre && (
+                    <div className="info-item">
+                      <div className="info-label">📍 Zona</div>
+                      <div className="info-value">{pedidoSeleccionado.zonaNombre}</div>
+                    </div>
+                  )}
+                  {pedidoSeleccionado.vueltaNombre && (
+                    <div className="info-item">
+                      <div className="info-label">🔄 Vuelta</div>
+                      <div className="info-value">{pedidoSeleccionado.vueltaNombre}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '16px',
+                  marginBottom: '16px'
+                }}>
+                  <div className="info-item">
+                    <div className="info-label">👥 Equipo</div>
+                    <div className="info-value">{pedidoSeleccionado.grupoNombre || 'Sin asignar'}</div>
+                  </div>
+                  <div className="info-item">
+                    <div className="info-label">📋 Estado</div>
+                    <span
+                      className="estado-badge"
+                      style={{ backgroundColor: getEstadoColor(pedidoSeleccionado) }}
+                    >
+                      {getEstadoTexto(pedidoSeleccionado)}
+                    </span>
+                  </div>
+                </div>
+
+                {pedidoSeleccionado.fechaEntrega && (
+                  <div className="info-item" style={{ marginBottom: '16px' }}>
+                    <div className="info-label">📅 Fecha de Despacho</div>
+                    <div className="info-value">
+                      {(() => {
+                        const hoy = new Date();
+                        hoy.setHours(0, 0, 0, 0);
+                        const fechaEntrega = new Date(pedidoSeleccionado.fechaEntrega);
+                        fechaEntrega.setHours(0, 0, 0, 0);
+                        const diffTime = fechaEntrega - hoy;
+                        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                        
+                        if (diffDays === 0) {
+                          return 'Hoy';
+                        } else if (diffDays === 1) {
+                          return 'Mañana';
+                        } else {
+                          return fechaEntrega.toLocaleDateString('es-AR', {
+                            weekday: 'long',
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric'
+                          });
+                        }
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {/* Mostrar timestamps según el estado */}
+                {pedidoSeleccionado.estado === 'EN_PREPARACION' && pedidoSeleccionado.etapaPreparacion === 'PENDIENTE_CARGA' && pedidoSeleccionado.fechaPendienteCarga && (
+                  <div style={{
+                    padding: '12px',
+                    background: 'linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%)',
+                    borderRadius: '8px',
+                    border: '1px solid #80deea',
+                    marginTop: '8px'
+                  }}>
+                    <div style={{ 
+                      fontSize: '0.85rem', 
+                      fontWeight: '600', 
+                      color: '#00838f',
+                      marginBottom: '4px'
+                    }}>
+                      ✅ Controlado
+                    </div>
+                    <div style={{ 
+                      fontSize: '0.9rem', 
+                      color: '#0097a7',
+                      fontWeight: '500'
+                    }}>
+                      {new Date(pedidoSeleccionado.fechaPendienteCarga).toLocaleString('es-AR', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {pedidoSeleccionado.estado === 'REALIZADO' && pedidoSeleccionado.fechaActualizacion && (
+                  <div style={{
+                    display: 'flex',
+                    gap: '12px',
+                    marginTop: '8px'
+                  }}>
+                    {pedidoSeleccionado.fechaPendienteCarga && (
+                      <div style={{
+                        flex: 1,
+                        padding: '12px',
+                        background: 'linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%)',
+                        borderRadius: '8px',
+                        border: '1px solid #80deea'
+                      }}>
+                        <div style={{ 
+                          fontSize: '0.85rem', 
+                          fontWeight: '600', 
+                          color: '#00838f',
+                          marginBottom: '4px'
+                        }}>
+                          ✅ Controlado
+                        </div>
+                        <div style={{ 
+                          fontSize: '0.9rem', 
+                          color: '#0097a7',
+                          fontWeight: '500'
+                        }}>
+                          {new Date(pedidoSeleccionado.fechaPendienteCarga).toLocaleString('es-AR', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <div style={{
+                      flex: 1,
+                      padding: '12px',
+                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                      borderRadius: '8px',
+                      border: '1px solid #86efac'
+                    }}>
+                      <div style={{ 
+                        fontSize: '0.85rem', 
+                        fontWeight: '600', 
+                        color: '#166534',
+                        marginBottom: '4px'
+                      }}>
+                        🏁 Finalizado
+                      </div>
+                      <div style={{ 
+                        fontSize: '0.9rem', 
+                        color: '#15803d',
+                        fontWeight: '500'
+                      }}>
+                        {new Date(pedidoSeleccionado.fechaActualizacion).toLocaleString('es-AR', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              {pedidoSeleccionado.estado === 'PENDIENTE' && (
+                <button
+                  onClick={() => {
+                    handleEliminarPedido(pedidoSeleccionado.id);
+                    cerrarModalDetalle();
+                  }}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#dc2626',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                  }}
+                >
+                  🗑️ Eliminar
+                </button>
+              )}
+              <button
+                onClick={cerrarModalDetalle}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#6B7280',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Transportistas y Vueltas del Día */}
+      {showModalTransportistasVueltas && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={cerrarModalTransportistasVueltas}
+        >
+          <div
+            style={{
+              backgroundColor: '#e5e7eb',
+              borderRadius: '12px',
+              padding: '24px',
+              maxWidth: '900px',
+              width: '90%',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '700', color: '#1e293b' }}>
+                🚚 Transportes y Vueltas del Día
+              </h2>
+              <button
+                onClick={cerrarModalTransportistasVueltas}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#666',
+                  padding: '0',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {loadingTransportistasVueltas ? (
+              <div style={{ textAlign: 'center', padding: '40px' }}>
+                <p>Cargando transportes...</p>
+              </div>
+            ) : transportistasVueltas.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                <p>No hay transportes activos</p>
+              </div>
+            ) : (() => {
+              // Agrupar transportistas por fecha de entrega
+              const hoy = new Date().toISOString().split('T')[0];
+              const fechasConDatos = new Set();
+              
+              // Recopilar todas las fechas que tienen vueltas asignadas
+              transportistasVueltas.forEach(item => {
+                if (item.vueltasPorFecha) {
+                  Object.keys(item.vueltasPorFecha).forEach(fecha => {
+                    if (item.vueltasPorFecha[fecha] && item.vueltasPorFecha[fecha].length > 0) {
+                      fechasConDatos.add(fecha);
+                    }
+                  });
+                }
+              });
+              
+              // Agregar también la fecha de hoy si no tiene vueltas pero queremos mostrarla
+              fechasConDatos.add(hoy);
+              
+              // Ordenar fechas: hoy primero, luego por fecha descendente (más recientes primero)
+              const fechasOrdenadas = Array.from(fechasConDatos).sort((a, b) => {
+                if (a === hoy) return -1;
+                if (b === hoy) return 1;
+                return b.localeCompare(a); // Descendente: más recientes primero
+              });
+              
+              const estaExpandida = (fecha) => fechasExpandidas.has(fecha);
+              
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {fechasOrdenadas.map((fecha) => {
+                    const esHoy = fecha === hoy;
+                    const expandida = estaExpandida(fecha);
+                    const fechaFormateada = esHoy 
+                      ? 'Hoy' 
+                      : new Date(fecha + 'T00:00:00').toLocaleDateString('es-AR', { 
+                          weekday: 'long', 
+                          day: 'numeric', 
+                          month: 'long',
+                          year: 'numeric'
+                        });
+                    
+                    // Separar transportistas: con vueltas en esta fecha y sin vueltas en esta fecha
+                    const transportistasConVueltasEnFecha = transportistasVueltas.filter(item => 
+                      item.vueltasPorFecha && 
+                      item.vueltasPorFecha[fecha] && 
+                      item.vueltasPorFecha[fecha].length > 0
+                    );
+                    
+                    // Transportistas sin vueltas en esta fecha específica
+                    const transportistasSinVueltasEnFecha = transportistasVueltas.filter(item => 
+                      !item.vueltasPorFecha || 
+                      !item.vueltasPorFecha[fecha] || 
+                      item.vueltasPorFecha[fecha].length === 0
+                    );
+                    
+                    return (
+                      <div key={fecha} style={{ 
+                        border: '2px solid #d1d5db', 
+                        borderRadius: '8px', 
+                        overflow: 'hidden',
+                        backgroundColor: 'white',
+                        boxShadow: esHoy && expandida ? '0 2px 8px rgba(33, 150, 243, 0.15)' : '0 1px 3px rgba(0, 0, 0, 0.1)'
+                      }}>
+                        {/* Encabezado de fecha (clic para expandir/colapsar) */}
+                        <div 
+                          onClick={() => toggleFechaExpandida(fecha)}
+                          style={{
+                            padding: '12px 16px',
+                            backgroundColor: esHoy ? '#E3F2FD' : '#f9fafb',
+                            borderBottom: expandida ? `2px solid ${esHoy ? '#2196F3' : '#e5e7eb'}` : 'none',
+                            fontWeight: '700',
+                            fontSize: '1rem',
+                            color: esHoy ? '#1976D2' : '#1e293b',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            transition: 'background-color 0.2s',
+                            userSelect: 'none'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = esHoy ? '#BBDEFB' : '#f3f4f6';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = esHoy ? '#E3F2FD' : '#f9fafb';
+                          }}
+                        >
+                          <span>
+                            {esHoy ? '📅 ' : '📆 '}{fechaFormateada}
+                            <span style={{ 
+                              marginLeft: '12px', 
+                              fontSize: '0.85rem', 
+                              fontWeight: '500',
+                              color: '#6b7280' 
+                            }}>
+                              ({transportistasConVueltasEnFecha.length} con vueltas, {transportistasSinVueltasEnFecha.length} sin vueltas)
+                            </span>
+                          </span>
+                          <span style={{ fontSize: '1.2rem', transition: 'transform 0.2s', transform: expandida ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                            ▼
+                          </span>
+                        </div>
+                        
+                        {/* Contenido expandible */}
+                        {expandida && (
+                          <div>
+                            {/* Transportistas SIN vueltas asignadas */}
+                            {transportistasSinVueltasEnFecha.length > 0 && (
+                              <div style={{ marginBottom: '16px' }}>
+                                <div style={{
+                                  padding: '10px 16px',
+                                  backgroundColor: '#fef2f2',
+                                  borderBottom: '1px solid #fecaca',
+                                  fontWeight: '600',
+                                  fontSize: '0.9rem',
+                                  color: '#991b1b'
+                                }}>
+                                  ⚠️ Transportes sin Vueltas Asignadas ({transportistasSinVueltasEnFecha.length})
+                                </div>
+                                <div style={{ padding: '12px 16px' }}>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                    {transportistasSinVueltasEnFecha.map((item) => (
+                                      <span
+                                        key={item.transportistaId}
+                                        style={{
+                                          padding: '6px 12px',
+                                          backgroundColor: '#f3f4f6',
+                                          color: '#6b7280',
+                                          borderRadius: '4px',
+                                          fontSize: '0.85rem',
+                                          fontWeight: '500',
+                                        }}
+                                      >
+                                        {item.transportistaNombre}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Transportistas CON vueltas asignadas */}
+                            {transportistasConVueltasEnFecha.length > 0 && (
+                              <div>
+                                <div style={{
+                                  padding: '10px 16px',
+                                  backgroundColor: '#f0fdf4',
+                                  borderBottom: '1px solid #d1fae5',
+                                  fontWeight: '600',
+                                  fontSize: '0.9rem',
+                                  color: '#166534'
+                                }}>
+                                  ✅ Transportes con Vueltas Asignadas ({transportistasConVueltasEnFecha.length})
+                                </div>
+                                <div style={{ overflowX: 'auto' }}>
+                                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                                    <thead>
+                                      <tr style={{ borderBottom: '2px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+                                        <th style={{ padding: '12px', textAlign: 'left', fontWeight: '700', color: '#1e293b' }}>
+                                          Transporte
+                                        </th>
+                                        <th style={{ padding: '12px', textAlign: 'left', fontWeight: '700', color: '#1e293b' }}>
+                                          Vuelta Asignada
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {transportistasConVueltasEnFecha.map((item, index) => (
+                                        <tr
+                                          key={item.transportistaId}
+                                          style={{
+                                            borderBottom: '1px solid #e5e7eb',
+                                            backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9fafb',
+                                          }}
+                                        >
+                                          <td style={{ padding: '12px', fontWeight: '600', color: '#1e293b' }}>
+                                            {item.transportistaNombre}
+                                          </td>
+                                          <td style={{ padding: '12px' }}>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                              {item.vueltasPorFecha[fecha].map((vuelta, idx) => (
+                                                <span
+                                                  key={idx}
+                                                  style={{
+                                                    backgroundColor: esHoy ? '#10b981' : '#6b7280',
+                                                    color: 'white',
+                                                    padding: '4px 10px',
+                                                    borderRadius: '4px',
+                                                    fontSize: '0.85rem',
+                                                    fontWeight: '600',
+                                                  }}
+                                                >
+                                                  {vuelta}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
       )}
 
     </div>

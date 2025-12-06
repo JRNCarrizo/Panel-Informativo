@@ -4,6 +4,7 @@ import com.Panelinformativo.grupos.model.Grupo;
 import com.Panelinformativo.grupos.repository.GrupoRepository;
 import com.Panelinformativo.pedidos.dto.PedidoCreateDTO;
 import com.Panelinformativo.pedidos.dto.PedidoDTO;
+import com.Panelinformativo.pedidos.dto.TransportistaVueltasDTO;
 import com.Panelinformativo.pedidos.model.Pedido;
 import com.Panelinformativo.pedidos.repository.PedidoRepository;
 import com.Panelinformativo.transportistas.model.Transportista;
@@ -17,8 +18,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -60,13 +62,28 @@ public class PedidoService {
         // Crear u obtener vuelta (obligatoria)
         Vuelta vuelta = vueltaService.crearObtenerVueltaEntity(dto.getVueltaNombre().trim());
 
+        // Determinar fecha de entrega: usar la proporcionada o por defecto hoy
+        LocalDate fechaEntrega = dto.getFechaEntrega() != null ? dto.getFechaEntrega() : LocalDate.now();
+        
+        // Validar que no se duplique la vuelta del mismo transporte en la misma fecha de entrega
+        List<Pedido> pedidosExistentes = pedidoRepository.findByTransportistaAndVueltaAndFechaEntrega(
+            transportista, vuelta, fechaEntrega
+        );
+        
+        if (!pedidosExistentes.isEmpty()) {
+            throw new IllegalArgumentException(
+                String.format("El transporte '%s' ya tiene asignada la vuelta '%s' para la fecha %s", 
+                    transportista.getNombre(), vuelta.getNombre(), fechaEntrega.toString())
+            );
+        }
+
         Pedido pedido = new Pedido();
         pedido.setNumeroPlanilla(dto.getNumeroPlanilla());
         pedido.setTransportista(transportista);
         pedido.setZona(zona);
         pedido.setCantidad(dto.getCantidad());
         pedido.setVuelta(vuelta);
-        pedido.setPrioridad(dto.getPrioridad() != null ? dto.getPrioridad() : Pedido.Prioridad.NORMAL);
+        pedido.setFechaEntrega(fechaEntrega);
         pedido.setEstado(Pedido.EstadoPedido.PENDIENTE);
         pedido.setUsuarioCreador(usuarioCreador);
 
@@ -83,12 +100,12 @@ public class PedidoService {
 
     public List<PedidoDTO> obtenerPedidosPorEstado(Pedido.EstadoPedido estado) {
         // Para pedidos REALIZADOS, ordenar por fecha de actualización descendente (más recientes primero)
-        // Para otros estados, ordenar por prioridad descendente y luego por fecha de creación ascendente
+        // Para otros estados, ordenar por fecha de creación ascendente
         List<Pedido> pedidos;
         if (estado == Pedido.EstadoPedido.REALIZADO) {
             pedidos = pedidoRepository.findByEstadoOrderByFechaActualizacionDesc(estado);
         } else {
-            pedidos = pedidoRepository.findByEstadoOrderByPrioridadDescFechaCreacionAsc(estado);
+            pedidos = pedidoRepository.findByEstadoOrderByFechaCreacionAsc(estado);
         }
         
         return pedidos.stream()
@@ -106,16 +123,33 @@ public class PedidoService {
     public PedidoDTO actualizarEstadoPedido(Long id, Pedido.EstadoPedido nuevoEstado) {
         Pedido pedido = pedidoRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
+        
+        // Guardar el estado anterior antes de cambiarlo
+        Pedido.EstadoPedido estadoAnterior = pedido.getEstado();
+        
         pedido.setEstado(nuevoEstado);
-        // Si cambia a REALIZADO o a PENDIENTE, limpiar la etapa de preparación
-        // Esto asegura que cuando vuelva a EN_PREPARACION, tenga que pasar por todas las etapas nuevamente
-        if (nuevoEstado == Pedido.EstadoPedido.REALIZADO || nuevoEstado == Pedido.EstadoPedido.PENDIENTE) {
+        
+        // Si cambia a REALIZADO, limpiar la etapa de preparación y el orden de prioridad
+        if (nuevoEstado == Pedido.EstadoPedido.REALIZADO) {
             pedido.setEtapaPreparacion(null);
-            // Si vuelve a PENDIENTE, limpiar también la fecha de pendiente de carga
-            if (nuevoEstado == Pedido.EstadoPedido.PENDIENTE) {
-                pedido.setFechaPendienteCarga(null);
-            }
+            pedido.setOrdenPrioridadCarga(null);
+            pedido.setControlado(false); // Limpiar cuando se realiza
         }
+        
+        // Si vuelve a PENDIENTE desde EN_PREPARACION, solo limpiar la etapa de preparación
+        // pero MANTENER el ordenPrioridadCarga para que vuelva a aparecer en la cola de prioridad
+        if (nuevoEstado == Pedido.EstadoPedido.PENDIENTE && estadoAnterior == Pedido.EstadoPedido.EN_PREPARACION) {
+            pedido.setEtapaPreparacion(null);
+            pedido.setFechaPendienteCarga(null);
+            pedido.setControlado(false); // Limpiar cuando vuelve a pendiente
+            // NO limpiar ordenPrioridadCarga - mantenerlo para que vuelva a la cola de prioridad en la misma posición
+        }
+        
+        // Si pasa a EN_PREPARACION, limpiar el orden de prioridad de carga (ya no está en la cola)
+        if (nuevoEstado == Pedido.EstadoPedido.EN_PREPARACION) {
+            pedido.setOrdenPrioridadCarga(null);
+        }
+        
         pedido = pedidoRepository.save(pedido);
         return convertirADTO(pedido);
     }
@@ -131,13 +165,18 @@ public class PedidoService {
         
         // Avanzar la etapa: null -> CONTROL -> PENDIENTE_CARGA -> REALIZADO
         if (pedido.getEtapaPreparacion() == null) {
+            // Cuando pasa a CONTROL, establecer como sin controlar
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.CONTROL);
+            pedido.setControlado(false);
         } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.CONTROL) {
+            // Cuando pasa a PENDIENTE_CARGA desde CONTROL, establecer como controlado
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.PENDIENTE_CARGA);
+            pedido.setControlado(true);
             pedido.setFechaPendienteCarga(LocalDateTime.now()); // Guardar fecha cuando pasa a PENDIENTE_CARGA
         } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.PENDIENTE_CARGA) {
             pedido.setEstado(Pedido.EstadoPedido.REALIZADO);
             pedido.setEtapaPreparacion(null);
+            pedido.setControlado(false); // Limpiar cuando se realiza
         }
         
         pedido = pedidoRepository.save(pedido);
@@ -207,8 +246,6 @@ public class PedidoService {
             pedido.setVuelta(null);
         }
         
-        pedido.setPrioridad(dto.getPrioridad() != null ? dto.getPrioridad() : Pedido.Prioridad.NORMAL);
-
         pedido = pedidoRepository.save(pedido);
         return convertirADTO(pedido);
     }
@@ -221,17 +258,100 @@ public class PedidoService {
         pedidoRepository.deleteById(id);
     }
 
+    // Obtener pedidos pendientes sin orden de prioridad de carga asignado (para Panel Depósito)
+    public List<PedidoDTO> obtenerPedidosPendientesSinOrden() {
+        return pedidoRepository.findPendientesSinOrdenPrioridadCarga().stream()
+                .map(this::convertirADTO)
+                .collect(Collectors.toList());
+    }
+
+    // Obtener pedidos pendientes con orden de prioridad de carga (para Pantalla Pública)
+    public List<PedidoDTO> obtenerPedidosConOrdenPrioridadCarga() {
+        return pedidoRepository.findPendientesConOrdenPrioridadCarga().stream()
+                .map(this::convertirADTO)
+                .collect(Collectors.toList());
+    }
+
+    // Actualizar el orden de prioridad de carga de múltiples pedidos
+    @Transactional
+    public List<PedidoDTO> actualizarOrdenPrioridadCarga(List<Long> pedidoIds) {
+        List<Pedido> pedidos = pedidoRepository.findAllById(pedidoIds);
+        
+        if (pedidos.size() != pedidoIds.size()) {
+            throw new IllegalArgumentException("Algunos pedidos no fueron encontrados");
+        }
+        
+        // Verificar que todos estén en estado PENDIENTE
+        for (Pedido pedido : pedidos) {
+            if (pedido.getEstado() != Pedido.EstadoPedido.PENDIENTE) {
+                throw new IllegalArgumentException("Solo se puede asignar orden a pedidos en estado PENDIENTE");
+            }
+        }
+        
+        // Asignar orden según la posición en la lista
+        for (int i = 0; i < pedidoIds.size(); i++) {
+            Long pedidoId = pedidoIds.get(i);
+            Pedido pedido = pedidos.stream()
+                    .filter(p -> p.getId().equals(pedidoId))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado: " + pedidoId));
+            pedido.setOrdenPrioridadCarga(i + 1);
+        }
+        
+        pedidoRepository.saveAll(pedidos);
+        
+        return pedidos.stream()
+                .map(this::convertirADTO)
+                .collect(Collectors.toList());
+    }
+
+    // Remover un pedido de la cola de prioridad de carga (poner orden en null)
+    @Transactional
+    public PedidoDTO removerDeColaPrioridadCarga(Long id) {
+        Pedido pedido = pedidoRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
+        
+        pedido.setOrdenPrioridadCarga(null);
+        pedido = pedidoRepository.save(pedido);
+        
+        return convertirADTO(pedido);
+    }
+
+    // Asignar un pedido a la cola de prioridad de carga (agregar al final)
+    @Transactional
+    public PedidoDTO agregarAColaPrioridadCarga(Long id) {
+        Pedido pedido = pedidoRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
+        
+        if (pedido.getEstado() != Pedido.EstadoPedido.PENDIENTE) {
+            throw new IllegalArgumentException("Solo se puede agregar a la cola pedidos en estado PENDIENTE");
+        }
+        
+        if (pedido.getOrdenPrioridadCarga() != null) {
+            throw new IllegalArgumentException("El pedido ya está en la cola de prioridad de carga");
+        }
+        
+        // Obtener el máximo orden y agregar al final
+        Integer maxOrden = pedidoRepository.findMaxOrdenPrioridadCarga();
+        pedido.setOrdenPrioridadCarga(maxOrden + 1);
+        pedido = pedidoRepository.save(pedido);
+        
+        return convertirADTO(pedido);
+    }
+
     private PedidoDTO convertirADTO(Pedido pedido) {
         PedidoDTO dto = new PedidoDTO();
         dto.setId(pedido.getId());
         dto.setNumeroPlanilla(pedido.getNumeroPlanilla());
-        dto.setPrioridad(pedido.getPrioridad());
         dto.setEstado(pedido.getEstado());
         dto.setEtapaPreparacion(pedido.getEtapaPreparacion());
         dto.setUsuarioCreadorNombre(pedido.getUsuarioCreador().getNombreCompleto());
         dto.setFechaCreacion(pedido.getFechaCreacion());
         dto.setFechaActualizacion(pedido.getFechaActualizacion());
         dto.setFechaPendienteCarga(pedido.getFechaPendienteCarga());
+        dto.setFechaEntrega(pedido.getFechaEntrega());
+        dto.setOrdenPrioridadCarga(pedido.getOrdenPrioridadCarga());
+        dto.setControlado(pedido.getControlado());
 
         if (pedido.getTransportista() != null) {
             dto.setTransportistaId(pedido.getTransportista().getId());
@@ -261,6 +381,64 @@ public class PedidoService {
         }
 
         return dto;
+    }
+
+    // Obtener planillas recibidas en el día actual
+    public List<PedidoDTO> obtenerPlanillasRecibidasDelDia() {
+        LocalDateTime inicioDia = LocalDateTime.now().withHour(0).withMinute(0).withSecond(0).withNano(0);
+        LocalDateTime finDia = inicioDia.plusDays(1);
+        
+        List<Pedido> pedidosDelDia = pedidoRepository.findByFechaCreacionBetween(inicioDia, finDia);
+        
+        return pedidosDelDia.stream()
+                .map(this::convertirADTO)
+                .collect(Collectors.toList());
+    }
+
+    // Obtener resumen de transportistas con vueltas asignadas agrupadas por fecha de entrega
+    public List<TransportistaVueltasDTO> obtenerResumenTransportistasVueltasDelDia() {
+        // Obtener todos los transportistas activos
+        List<com.Panelinformativo.transportistas.dto.TransportistaDTO> transportistas = transportistaService.obtenerTransportistasActivos();
+        
+        // Obtener todos los pedidos (no solo del día, para ver todas las fechas de entrega)
+        List<Pedido> todosLosPedidos = pedidoRepository.findAll();
+        
+        // Agrupar vueltas por transportista y por fecha de entrega
+        // Estructura: transportistaId -> fechaEntrega -> lista de vueltas
+        Map<Long, Map<String, Set<String>>> vueltasPorTransportistaYFecha = new HashMap<>();
+        for (Pedido pedido : todosLosPedidos) {
+            if (pedido.getTransportista() != null && pedido.getVuelta() != null && pedido.getFechaEntrega() != null) {
+                Long transportistaId = pedido.getTransportista().getId();
+                String fechaEntrega = pedido.getFechaEntrega().toString(); // Formato: YYYY-MM-DD
+                String vueltaNombre = pedido.getVuelta().getNombre();
+                
+                vueltasPorTransportistaYFecha
+                    .computeIfAbsent(transportistaId, k -> new HashMap<>())
+                    .computeIfAbsent(fechaEntrega, k -> new HashSet<>())
+                    .add(vueltaNombre);
+            }
+        }
+        
+        // Construir el resumen
+        List<TransportistaVueltasDTO> resumen = new ArrayList<>();
+        for (com.Panelinformativo.transportistas.dto.TransportistaDTO transportista : transportistas) {
+            Map<String, Set<String>> vueltasPorFecha = vueltasPorTransportistaYFecha.getOrDefault(transportista.getId(), new HashMap<>());
+            
+            // Convertir Set<String> a List<String> para cada fecha
+            Map<String, List<String>> vueltasPorFechaList = new HashMap<>();
+            for (Map.Entry<String, Set<String>> entry : vueltasPorFecha.entrySet()) {
+                vueltasPorFechaList.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+            }
+            
+            TransportistaVueltasDTO dto = new TransportistaVueltasDTO();
+            dto.setTransportistaId(transportista.getId());
+            dto.setTransportistaNombre(transportista.getNombre());
+            dto.setVueltasPorFecha(vueltasPorFechaList);
+            
+            resumen.add(dto);
+        }
+        
+        return resumen;
     }
 }
 

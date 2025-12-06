@@ -8,6 +8,7 @@ import { connectWebSocket, disconnectWebSocket } from '../services/websocketServ
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 import Chat from './Chat';
+import GestionPrioridadCarga from './GestionPrioridadCarga';
 import './DepositoPanel.css';
 
 const DepositoPanel = () => {
@@ -15,8 +16,7 @@ const DepositoPanel = () => {
   const [pedidos, setPedidos] = useState([]);
   const [grupos, setGrupos] = useState([]);
   const [transportistas, setTransportistas] = useState([]);
-  const [filtroEstado, setFiltroEstado] = useState('PENDIENTE'); // 'PENDIENTE', 'EN_PREPARACION', 'REALIZADO', 'TRANSPORTISTAS', o 'EQUIPOS'
-  const [filtroEtapaPreparacion, setFiltroEtapaPreparacion] = useState('TODOS'); // 'TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'
+  const [filtroEstado, setFiltroEstado] = useState('PRIORIDAD_CARGA'); // 'PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'TRANSPORTISTAS', 'EQUIPOS'
   const [textoBusqueda, setTextoBusqueda] = useState(''); // Texto de búsqueda avanzada
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -46,6 +46,8 @@ const DepositoPanel = () => {
     PENDIENTE: [],
     EN_PREPARACION: [],
   });
+  // Estado para rastrear cantidad de planillas sin orden (para el indicador de Prioridad de Carga)
+  const [cantidadPlanillasSinOrden, setCantidadPlanillasSinOrden] = useState(0);
   // Estado para crear equipos
   const [showGrupoModal, setShowGrupoModal] = useState(false);
   const [grupoForm, setGrupoForm] = useState({ nombre: '' });
@@ -68,10 +70,6 @@ const DepositoPanel = () => {
   const [pedidoSeleccionadoIndex, setPedidoSeleccionadoIndex] = useState(-1);
   // Estado para saber si estamos en modo navegación de registros
   const [enModoNavegacionRegistros, setEnModoNavegacionRegistros] = useState(false);
-  // Estado para saber si estamos en modo navegación de sub-pestañas
-  const [enModoNavegacionSubPestanas, setEnModoNavegacionSubPestanas] = useState(false);
-  // Estado para rastrear el índice de la sub-pestaña seleccionada
-  const [subPestanaSeleccionadaIndex, setSubPestanaSeleccionadaIndex] = useState(-1);
   // Refs para los selects de "Asignar Equipo" y botones "Preparar"
   const equipoSelectRefs = useRef({});
   const prepararButtonRefs = useRef({});
@@ -84,8 +82,6 @@ const DepositoPanel = () => {
   const [enModoNavegacionBotonesRegistro, setEnModoNavegacionBotonesRegistro] = useState(false);
   // Estado para rastrear qué botón está seleccionado dentro de un registro (para PENDIENTE)
   const [botonSeleccionadoEnRegistro, setBotonSeleccionadoEnRegistro] = useState({});
-  // Refs para los botones de sub-pestañas (filtros de etapa)
-  const subPestanaButtonRefs = useRef([]);
   // Estados para navegación en "Realizados"
   const [diaSeleccionadoIndex, setDiaSeleccionadoIndex] = useState(-1);
   const [enModoNavegacionDias, setEnModoNavegacionDias] = useState(false);
@@ -117,8 +113,11 @@ const DepositoPanel = () => {
           await cargarTransportistas();
         } else if (filtroEstado === 'EQUIPOS') {
           await cargarGrupos();
+        } else if (filtroEstado === 'PRIORIDAD_CARGA') {
+          // La pestaña de Prioridad de Carga maneja su propia carga de datos
+          // No hacer nada aquí
         } else {
-          // Para PENDIENTE, EN_PREPARACION, REALIZADO
+          // Para PENDIENTE, EN_PREPARACION, CONTROL, PENDIENTE_CARGA, REALIZADO
           await cargarPedidos();
         }
 
@@ -138,6 +137,29 @@ const DepositoPanel = () => {
 
     // Conectar WebSocket (solo una vez, el servicio maneja múltiples conexiones)
     connectWebSocket((message) => {
+      // Función helper para actualizar el contador de planillas sin orden
+      const actualizarContadorPlanillasSinOrden = (inmediato = false) => {
+        // Si es inmediato, actualizar sin delay
+        if (inmediato) {
+          pedidoService.obtenerPendientesSinOrden()
+            .then(response => {
+              setCantidadPlanillasSinOrden((response.data || []).length);
+            })
+            .catch(err => console.error('Error al actualizar cantidad sin orden:', err));
+          return;
+        }
+        
+        // Para actualizaciones remotas, usar un pequeño debounce para evitar múltiples llamadas simultáneas
+        clearTimeout(actualizarContadorPlanillasSinOrden.timeout);
+        actualizarContadorPlanillasSinOrden.timeout = setTimeout(() => {
+          pedidoService.obtenerPendientesSinOrden()
+            .then(response => {
+              setCantidadPlanillasSinOrden((response.data || []).length);
+            })
+            .catch(err => console.error('Error al actualizar cantidad sin orden:', err));
+        }, 100); // Debounce reducido a 100ms para actualizaciones más rápidas
+      };
+      
       if (message.tipo === 'eliminado') {
         setPedidos((prev) => prev.filter((p) => p.id !== message.id));
         // Actualizar cache también
@@ -145,7 +167,13 @@ const DepositoPanel = () => {
           PENDIENTE: prev.PENDIENTE.filter(p => p.id !== message.id),
           EN_PREPARACION: prev.EN_PREPARACION.filter(p => p.id !== message.id),
         }));
+        // Actualizar cantidad de planillas sin orden cuando se elimina
+        actualizarContadorPlanillasSinOrden();
       } else {
+        // Para cualquier otro cambio (nuevo pedido, actualización, cambio de orden, etc.)
+        // Actualizar el contador de planillas sin orden
+        // Esto se ejecuta SIEMPRE cuando hay cambios, incluso si el mensaje no tiene tipo
+        actualizarContadorPlanillasSinOrden();
         // Recargar datos según la pestaña activa
         if (filtroEstado === 'TRANSPORTISTAS') {
           cargarTransportistas().catch(err => {
@@ -155,24 +183,52 @@ const DepositoPanel = () => {
           cargarGrupos().catch(err => {
             console.error('Error al recargar equipos desde WebSocket:', err);
           });
+        } else if (filtroEstado === 'PRIORIDAD_CARGA') {
+          // La pestaña de Prioridad de Carga maneja su propia recarga vía WebSocket
+          // No hacer nada aquí
+        } else if (filtroEstado === 'PENDIENTE') {
+          // Para PENDIENTE: actualizar silenciosamente sin mostrar loading
+          // Solo recargar si no hay datos actualmente cargados
+          if (pedidos.length === 0) {
+            cargarPedidos().catch(err => {
+              console.error('Error al recargar pedidos desde WebSocket:', err);
+          });
         } else {
-          // Para PENDIENTE, EN_PREPARACION, REALIZADO
+            // Actualizar silenciosamente en segundo plano
+            pedidoService.obtenerConOrdenPrioridadCarga()
+              .then(response => {
+                setPedidos(response.data || []);
+              })
+              .catch(err => {
+                console.error('Error al actualizar pedidos pendientes desde WebSocket:', err);
+              });
+          }
+        } else if (filtroEstado === 'EN_PREPARACION' || filtroEstado === 'CONTROL' || filtroEstado === 'PENDIENTE_CARGA' || filtroEstado === 'REALIZADO') {
+          // Para EN_PREPARACION, CONTROL, PENDIENTE_CARGA, REALIZADO
           cargarPedidos().catch(err => {
             console.error('Error al recargar pedidos desde WebSocket:', err);
           });
         }
-        // Recargar cache para notificaciones
+        // Recargar cache para notificaciones (incluyendo cantidad de planillas sin orden)
+        // Esto se ejecuta SIEMPRE cuando hay cambios, independientemente de la pestaña activa
+        // Usar un pequeño delay para agrupar múltiples actualizaciones (cuando se actualiza el orden de varios pedidos)
+        clearTimeout(actualizarContadorPlanillasSinOrden.cacheTimeout);
+        actualizarContadorPlanillasSinOrden.cacheTimeout = setTimeout(() => {
         Promise.all([
-          pedidoService.obtenerPorEstado('PENDIENTE'),
+            pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
           pedidoService.obtenerPorEstado('EN_PREPARACION'),
-        ]).then(([pendientes, enPreparacion]) => {
+            pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
+          ]).then(([pendientesConOrden, enPreparacion, sinOrden]) => {
           setTodosLosPedidos({
-            PENDIENTE: pendientes.data || [],
+              PENDIENTE: pendientesConOrden.data || [],
             EN_PREPARACION: enPreparacion.data || [],
           });
+            // Actualizar cantidad de planillas sin orden para el indicador (siempre, incluso si no estamos en esa pestaña)
+            setCantidadPlanillasSinOrden((sinOrden.data || []).length);
         }).catch(err => {
           console.error('Error al actualizar cache desde WebSocket:', err);
         });
+        }, 200); // Delay reducido a 200ms para actualizaciones más rápidas
       }
     });
 
@@ -264,15 +320,10 @@ const DepositoPanel = () => {
   useEffect(() => {
     setPedidoSeleccionadoIndex(-1);
     setEnModoNavegacionRegistros(false);
-    setEnModoNavegacionSubPestanas(false);
-    setSubPestanaSeleccionadaIndex(-1);
     setEnModoNavegacionBotonesRegistro(false);
     setBotonSeleccionadoEnPreparacion({});
     setBotonSeleccionadoEnRegistro({});
-    // Resetear filtro de etapa y búsqueda cuando cambias de pestaña
-    if (filtroEstado !== 'EN_PREPARACION') {
-      setFiltroEtapaPreparacion('TODOS');
-    }
+    // Resetear búsqueda cuando cambias de pestaña
     setTextoBusqueda('');
   }, [filtroEstado]);
 
@@ -297,19 +348,7 @@ const DepositoPanel = () => {
 
       // Si estamos en Pendientes
       if (filtroEstado === 'PENDIENTE') {
-        // Si estamos en un select de "Asignar Equipo" y presionamos Enter
-        if (isInputFocused && focusedElement.tagName === 'SELECT') {
-          const selectPedidoId = focusedElement.getAttribute('data-pedido-id');
-          if (event.key === 'Enter' && selectPedidoId) {
-            event.preventDefault();
-            // Hacer click en el botón "Preparar" de ese pedido
-            const prepararButton = prepararButtonRefs.current[selectPedidoId];
-            if (prepararButton) {
-              prepararButton.click();
-            }
-          }
-          return;
-        }
+        // Ya no hay select de "Asignar Equipo" en Pendientes, así que no hay nada que hacer aquí
 
         // Si no estamos en un input/select, manejar navegación entre pedidos
         if (!isInputFocused) {
@@ -416,61 +455,22 @@ const DepositoPanel = () => {
             }
 
             // Si estamos navegando botones, flechas izquierda/derecha para navegar entre botones
+            // En PENDIENTE ya no hay select, solo el botón Preparar
             if (enModoNavegacionBotonesRegistro && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
               event.preventDefault();
-              const pedidoId = pedidosPendientes[pedidoSeleccionadoIndex].id;
-              const botonActual = botonSeleccionadoEnRegistro[pedidoId];
-              
-              if (botonActual === 'select') {
-                // Navegar al botón Preparar
-                const prepararButton = prepararButtonRefs.current[pedidoId];
-                if (prepararButton) {
-                  setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'preparar' });
-                  prepararButton.focus();
-                }
-              } else if (botonActual === 'preparar') {
-                // Volver al select
-                const equipoSelect = equipoSelectRefs.current[pedidoId];
-                if (equipoSelect) {
-                  setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'select' });
-                  equipoSelect.focus();
-                }
-              }
+              // En PENDIENTE solo hay un botón (Preparar), así que no hay navegación horizontal
               return;
             }
 
-            // Enter para navegar entre botones del registro
+            // Enter para activar el botón Preparar del registro
             if (event.key === 'Enter' && pedidosPendientes.length > 0) {
               event.preventDefault();
               const pedidoId = pedidosPendientes[pedidoSeleccionadoIndex].id;
               
-              // Si ya estamos navegando botones, activar el botón seleccionado o navegar al siguiente
-              if (enModoNavegacionBotonesRegistro && botonSeleccionadoEnRegistro[pedidoId]) {
-                const botonActual = botonSeleccionadoEnRegistro[pedidoId];
-                
-                // Si estamos en el select, navegar al botón Preparar
-                if (botonActual === 'select') {
-                  const prepararButton = prepararButtonRefs.current[pedidoId];
-                  if (prepararButton) {
-                    setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'preparar' });
-                    prepararButton.focus();
-                  }
-                } 
-                // Si estamos en el botón Preparar, activarlo
-                else if (botonActual === 'preparar') {
+              // Activar directamente el botón Preparar
                   const prepararButton = prepararButtonRefs.current[pedidoId];
                   if (prepararButton) {
                     prepararButton.click();
-                  }
-                }
-              } else {
-                // Primera vez que presionamos Enter, enfocar el select
-                setEnModoNavegacionBotonesRegistro(true);
-              const equipoSelect = equipoSelectRefs.current[pedidoId];
-              if (equipoSelect) {
-                  setBotonSeleccionadoEnRegistro({ ...botonSeleccionadoEnRegistro, [pedidoId]: 'select' });
-                equipoSelect.focus();
-                }
               }
               return;
             }
@@ -548,42 +548,10 @@ const DepositoPanel = () => {
 
         // Si no estamos en un input/select/button, manejar navegación entre pedidos
         if (!isInputFocused) {
-          // Si estamos en modo navegación de sub-pestañas
-          if (enModoNavegacionSubPestanas) {
-            const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
-            const currentSubIndex = subPestanas.indexOf(filtroEtapaPreparacion);
-            
-            // Navegación izquierda/derecha entre sub-pestañas
-            if (event.key === 'ArrowLeft' && currentSubIndex > 0) {
-              event.preventDefault();
-              const nuevaSubPestana = subPestanas[currentSubIndex - 1];
-              setFiltroEtapaPreparacion(nuevaSubPestana);
-              setSubPestanaSeleccionadaIndex(currentSubIndex - 1);
-              // Enfocar el botón de la sub-pestaña
-              const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex - 1];
-              if (subPestanaButton) {
-                subPestanaButton.focus();
-              }
-              return;
-            }
-            
-            if (event.key === 'ArrowRight' && currentSubIndex < subPestanas.length - 1) {
-              event.preventDefault();
-              const nuevaSubPestana = subPestanas[currentSubIndex + 1];
-              setFiltroEtapaPreparacion(nuevaSubPestana);
-              setSubPestanaSeleccionadaIndex(currentSubIndex + 1);
-              // Enfocar el botón de la sub-pestaña
-              const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex + 1];
-              if (subPestanaButton) {
-                subPestanaButton.focus();
-              }
-              return;
-            }
-            
-            // Con flecha abajo desde sub-pestañas, entrar a los registros
+          // Para pestañas con pedidos, entrar directamente a los registros
+          if (!enModoNavegacionRegistros) {
             if (event.key === 'ArrowDown' && pedidosEnPreparacion.length > 0) {
               event.preventDefault();
-              setEnModoNavegacionSubPestanas(false);
               const nuevoIndex = 0;
               setPedidoSeleccionadoIndex(nuevoIndex);
               setEnModoNavegacionRegistros(true);
@@ -595,55 +563,6 @@ const DepositoPanel = () => {
                 if (pedidoCard) {
                   pedidoCard.focus();
                 }
-              }
-              return;
-            }
-            
-            // Con flecha arriba desde sub-pestañas, volver a la pestaña principal
-            if (event.key === 'ArrowUp') {
-              event.preventDefault();
-              setEnModoNavegacionSubPestanas(false);
-              setSubPestanaSeleccionadaIndex(-1);
-              // Enfocar el botón de la pestaña principal
-              const tabButton = document.querySelector('.filtros-buttons button.active');
-              if (tabButton) {
-                tabButton.focus();
-              }
-              return;
-            }
-          }
-          
-          // Si no estamos en modo navegación de sub-pestañas ni de registros, y presionamos flecha abajo
-          if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros) {
-            // Si estamos en EN_PREPARACION, entrar a las sub-pestañas primero
-            if (event.key === 'ArrowDown' && filtroEstado === 'EN_PREPARACION') {
-              event.preventDefault();
-              setEnModoNavegacionSubPestanas(true);
-              const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
-              const currentSubIndex = subPestanas.indexOf(filtroEtapaPreparacion);
-              setSubPestanaSeleccionadaIndex(currentSubIndex >= 0 ? currentSubIndex : 0);
-              // Enfocar el botón de sub-pestaña actual
-              const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex >= 0 ? currentSubIndex : 0];
-              if (subPestanaButton) {
-                subPestanaButton.focus();
-              }
-              return;
-            }
-            
-            // Para otras pestañas o si no hay sub-pestañas, entrar directamente a los registros
-            if (event.key === 'ArrowDown' && pedidosEnPreparacion.length > 0) {
-            event.preventDefault();
-            const nuevoIndex = enModoNavegacionRegistros 
-                ? (pedidoSeleccionadoIndex < pedidosEnPreparacion.length - 1 ? pedidoSeleccionadoIndex + 1 : 0)
-              : 0;
-            setPedidoSeleccionadoIndex(nuevoIndex);
-            setEnModoNavegacionRegistros(true);
-            
-            // Enfocar el card del pedido
-              const pedidoId = pedidosEnPreparacion[nuevoIndex].id;
-            const pedidoCard = document.querySelector(`[data-pedido-id="${pedidoId}"]`);
-            if (pedidoCard) {
-              pedidoCard.focus();
             }
             return;
             }
@@ -659,22 +578,10 @@ const DepositoPanel = () => {
               setEnModoNavegacionBotonesRegistro(false);
               setBotonSeleccionadoEnPreparacion({});
               
-              // Si estamos en EN_PREPARACION, volver a las sub-pestañas
-              if (filtroEstado === 'EN_PREPARACION') {
-                setEnModoNavegacionSubPestanas(true);
-                const subPestanas = ['TODOS', 'SIN_CONTROL', 'CONTROL', 'PENDIENTE_CARGA'];
-                const currentSubIndex = subPestanas.indexOf(filtroEtapaPreparacion);
-                setSubPestanaSeleccionadaIndex(currentSubIndex >= 0 ? currentSubIndex : 0);
-                const subPestanaButton = subPestanaButtonRefs.current[currentSubIndex >= 0 ? currentSubIndex : 0];
-                if (subPestanaButton) {
-                  subPestanaButton.focus();
-                }
-              } else {
               // Enfocar el botón de la pestaña para que las flechas izquierda/derecha funcionen
               const tabButton = document.querySelector('.filtros-buttons button.active');
               if (tabButton) {
                 tabButton.focus();
-                }
               }
               return;
             }
@@ -838,9 +745,9 @@ const DepositoPanel = () => {
         }
       }
 
-      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros ni de sub-pestañas)
-      if (!enModoNavegacionRegistros && !enModoNavegacionSubPestanas && !isInputFocused) {
-        const tabs = ['PENDIENTE', 'EN_PREPARACION', 'REALIZADO', 'EQUIPOS', 'TRANSPORTISTAS'];
+      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros)
+      if (!enModoNavegacionRegistros && !isInputFocused) {
+        const tabs = ['PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'EQUIPOS', 'TRANSPORTISTAS'];
         const currentIndex = tabs.indexOf(filtroEstado);
 
         if (event.key === 'ArrowLeft' && currentIndex > 0) {
@@ -848,13 +755,11 @@ const DepositoPanel = () => {
           setFiltroEstado(tabs[currentIndex - 1]);
           setPedidoSeleccionadoIndex(-1);
           setEnModoNavegacionRegistros(false);
-          setEnModoNavegacionSubPestanas(false);
         } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
           event.preventDefault();
           setFiltroEstado(tabs[currentIndex + 1]);
           setPedidoSeleccionadoIndex(-1);
           setEnModoNavegacionRegistros(false);
-          setEnModoNavegacionSubPestanas(false);
         }
       }
     };
@@ -863,7 +768,7 @@ const DepositoPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [filtroEstado, filtroEtapaPreparacion, showGrupoModal, showResumenModal, pedidos, pedidoSeleccionadoIndex, enModoNavegacionRegistros, enModoNavegacionSubPestanas, subPestanaSeleccionadaIndex, enModoNavegacionBotonesRegistro, botonSeleccionadoEnPreparacion, botonSeleccionadoEnRegistro]);
+  }, [filtroEstado, showGrupoModal, showResumenModal, pedidos, pedidoSeleccionadoIndex, enModoNavegacionRegistros, enModoNavegacionBotonesRegistro, botonSeleccionadoEnPreparacion, botonSeleccionadoEnRegistro]);
 
   // Navegación con teclado para la sección "Realizados"
   useEffect(() => {
@@ -1080,14 +985,17 @@ const DepositoPanel = () => {
   // Función para cargar todos los pedidos para calcular notificaciones
   const cargarTodosLosPedidosParaNotificaciones = async () => {
     try {
-      const [pendientes, enPreparacion] = await Promise.all([
-        pedidoService.obtenerPorEstado('PENDIENTE'),
+      const [pendientesConOrden, enPreparacion, sinOrden] = await Promise.all([
+        pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado (los que aparecen en "Pendientes")
         pedidoService.obtenerPorEstado('EN_PREPARACION'),
+        pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
       ]);
       setTodosLosPedidos({
-        PENDIENTE: pendientes.data || [],
+        PENDIENTE: pendientesConOrden.data || [],
         EN_PREPARACION: enPreparacion.data || [],
       });
+      // Actualizar cantidad de planillas sin orden para el indicador
+      setCantidadPlanillasSinOrden((sinOrden.data || []).length);
     } catch (error) {
       console.error('Error al cargar todos los pedidos:', error);
     }
@@ -1104,8 +1012,8 @@ const DepositoPanel = () => {
     if (!notificationIntervalSet.current) {
       notificationIntervalSet.current = true;
       cargarTodosLosPedidosParaNotificaciones();
-      // Recargar cada 10 segundos para actualizar notificaciones
-      const interval = setInterval(cargarTodosLosPedidosParaNotificaciones, 10000);
+      // Recargar cada 5 segundos para actualizar notificaciones y contador de planillas sin orden
+      const interval = setInterval(cargarTodosLosPedidosParaNotificaciones, 5000);
       return () => {
         clearInterval(interval);
         notificationIntervalSet.current = false;
@@ -1155,40 +1063,65 @@ const DepositoPanel = () => {
   // Los pedidos solo se marcarán como vistos cuando el usuario cambie a esa pestaña
   // (esto se maneja en el otro useEffect que detecta cambios de pestaña)
 
-  // Función para obtener el valor numérico de la prioridad (mayor = más urgente)
-  const getPrioridadValue = (prioridad) => {
-    const prioridades = {
-      'URGENTE': 4,
-      'ALTA': 3,
-      'NORMAL': 2,
-      'BAJA': 1
-    };
-    return prioridades[prioridad] || 0;
-  };
-
   const cargarPedidos = async () => {
     try {
-      const response = await pedidoService.obtenerPorEstado(filtroEstado);
-      const pedidosData = response.data || [];
+      let pedidosData = [];
       
-      // Ordenar pedidos: primero por prioridad (URGENTE > ALTA > NORMAL > BAJA)
-      // y luego por fecha de creación (más antiguos primero)
-      const pedidosOrdenados = pedidosData.sort((a, b) => {
-        // Primero comparar por prioridad
-        const prioridadA = getPrioridadValue(a.prioridad);
-        const prioridadB = getPrioridadValue(b.prioridad);
+      // Para PENDIENTE: solo mostrar pedidos con ordenPrioridadCarga asignado (ordenados por ese orden)
+      // Esto es igual a lo que se muestra en la pantalla pública
+      if (filtroEstado === 'PENDIENTE') {
+        const response = await pedidoService.obtenerConOrdenPrioridadCarga();
+        pedidosData = response.data || [];
+        // Ya vienen ordenados por ordenPrioridadCarga desde el backend
+      } else if (filtroEstado === 'EN_PREPARACION' || filtroEstado === 'CONTROL' || filtroEstado === 'PENDIENTE_CARGA') {
+        // Para EN_PREPARACION, CONTROL y PENDIENTE_CARGA: obtener todos los pedidos EN_PREPARACION
+        // y filtrar por etapaPreparacion
+        const response = await pedidoService.obtenerPorEstado('EN_PREPARACION');
+        let todosLosPedidos = response.data || [];
         
-        if (prioridadA !== prioridadB) {
-          return prioridadB - prioridadA; // Mayor prioridad primero
+        // Filtrar según la pestaña activa
+        if (filtroEstado === 'EN_PREPARACION') {
+          // Solo pedidos sin etapaPreparacion (null)
+          pedidosData = todosLosPedidos.filter(p => !p.etapaPreparacion);
+        } else if (filtroEstado === 'CONTROL') {
+          // Solo pedidos con etapaPreparacion = 'CONTROL' y que NO estén controlados (sin controlar)
+          pedidosData = todosLosPedidos.filter(p => p.etapaPreparacion === 'CONTROL' && !p.controlado);
+        } else if (filtroEstado === 'PENDIENTE_CARGA') {
+          // Solo pedidos con etapaPreparacion = 'PENDIENTE_CARGA'
+          pedidosData = todosLosPedidos.filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA');
         }
         
-        // Si tienen la misma prioridad, ordenar por fecha de creación (más antiguos primero)
+        // Ordenar pedidos por fecha de creación (más antiguos primero)
+        const pedidosOrdenados = pedidosData.sort((a, b) => {
         const fechaA = new Date(a.fechaCreacion || a.fechaActualizacion || 0);
         const fechaB = new Date(b.fechaCreacion || b.fechaActualizacion || 0);
         return fechaA - fechaB;
       });
       
-      setPedidos(pedidosOrdenados);
+        pedidosData = pedidosOrdenados;
+      } else {
+        // Para REALIZADO: usar el método normal
+      const response = await pedidoService.obtenerPorEstado(filtroEstado);
+        pedidosData = response.data || [];
+      
+      // Ordenar pedidos por fecha de actualización (más recientes primero) para REALIZADOS
+      // Para otros estados, ordenar por fecha de creación
+      const pedidosOrdenados = pedidosData.sort((a, b) => {
+        if (filtroEstado === 'REALIZADO') {
+          const fechaA = new Date(a.fechaActualizacion || a.fechaCreacion || 0);
+          const fechaB = new Date(b.fechaActualizacion || b.fechaCreacion || 0);
+          return fechaB - fechaA; // Más recientes primero
+        } else {
+          const fechaA = new Date(a.fechaCreacion || 0);
+          const fechaB = new Date(b.fechaCreacion || 0);
+          return fechaA - fechaB; // Más antiguos primero
+        }
+      });
+      
+        pedidosData = pedidosOrdenados;
+      }
+      
+      setPedidos(pedidosData);
     } catch (error) {
       console.error('Error al cargar pedidos:', error);
       setPedidos([]);
@@ -1258,12 +1191,12 @@ const DepositoPanel = () => {
       await pedidoService.avanzarEtapaPreparacion(pedidoId);
       await cargarPedidos();
       // Actualizar cache
-      const [pendientes, enPreparacion] = await Promise.all([
-        pedidoService.obtenerPorEstado('PENDIENTE'),
+      const [pendientesConOrden, enPreparacion] = await Promise.all([
+        pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
         pedidoService.obtenerPorEstado('EN_PREPARACION'),
       ]);
       setTodosLosPedidos({
-        PENDIENTE: pendientes.data || [],
+        PENDIENTE: pendientesConOrden.data || [],
         EN_PREPARACION: enPreparacion.data || [],
       });
     } catch (error) {
@@ -1310,7 +1243,8 @@ const DepositoPanel = () => {
         });
       }
       
-      // Si el pedido cambia de EN_PREPARACION a PENDIENTE, actualizar el cache para resetear etapaPreparacion
+      // Si el pedido cambia de EN_PREPARACION a PENDIENTE, actualizar el cache
+      // Ahora el backend MANTIENE el ordenPrioridadCarga, por lo que el pedido vuelve a la cola de prioridad
       if (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') {
         // Removerlo de los vistos de EN_PREPARACION
         setPedidosVistos(prev => {
@@ -1319,28 +1253,39 @@ const DepositoPanel = () => {
           const nuevoEstado = {
             ...prev,
             EN_PREPARACION: nuevosVistosEnPreparacion,
+            // No agregar a PENDIENTE para que aparezca como nuevo en la pestaña Pendientes
           };
           guardarPedidosVistos(nuevoEstado);
           return nuevoEstado;
         });
         
-        // Actualizar el cache manualmente: remover de EN_PREPARACION y agregar a PENDIENTE con etapaPreparacion null
+        // Actualizar el cache manualmente: remover de EN_PREPARACION
+        // Cuando vuelve a PENDIENTE, el backend MANTIENE el ordenPrioridadCarga,
+        // por lo que el pedido vuelve a aparecer en la pestaña Pendientes y en la pantalla pública
         setTodosLosPedidos(prev => {
           const nuevoEnPreparacion = prev.EN_PREPARACION.filter(p => p.id !== pedidoId);
-          const nuevoPendiente = [...prev.PENDIENTE];
-          // Actualizar el pedido en PENDIENTE para asegurar que etapaPreparacion sea null
-          const pedidoIndex = nuevoPendiente.findIndex(p => p.id === pedidoId);
-          if (pedidoIndex >= 0) {
-            nuevoPendiente[pedidoIndex] = { ...nuevoPendiente[pedidoIndex], estado: nuevoEstado, etapaPreparacion: null };
-          } else {
-            const pedidoActualizado = { ...pedidoActual, estado: nuevoEstado, etapaPreparacion: null };
-            nuevoPendiente.push(pedidoActualizado);
-          }
+          // El pedido volverá a la lista de PENDIENTE con su ordenPrioridadCarga conservado
+          // Se recargará automáticamente cuando se actualice desde el backend
           return {
-            PENDIENTE: nuevoPendiente,
+            ...prev,
             EN_PREPARACION: nuevoEnPreparacion,
           };
         });
+        
+        // Actualizar la lista de pendientes inmediatamente para que aparezca en la pestaña Pendientes
+        pedidoService.obtenerConOrdenPrioridadCarga()
+          .then(response => {
+            const pedidosConOrden = response.data || [];
+            setTodosLosPedidos(prev => ({
+              ...prev,
+              PENDIENTE: pedidosConOrden,
+            }));
+            // Si estamos en la pestaña de Pendientes, actualizar también la lista visible
+            if (filtroEstado === 'PENDIENTE') {
+              setPedidos(pedidosConOrden);
+            }
+          })
+          .catch(err => console.error('Error al actualizar pedidos pendientes:', err));
       }
       
       // Recargar pedidos de la pestaña actual
@@ -1352,9 +1297,10 @@ const DepositoPanel = () => {
                     (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') ? 1000 : 300;
       setTimeout(async () => {
         try {
-          const [pendientes, enPreparacion] = await Promise.all([
-            pedidoService.obtenerPorEstado('PENDIENTE'),
+          const [pendientesConOrden, enPreparacion, sinOrden] = await Promise.all([
+            pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
             pedidoService.obtenerPorEstado('EN_PREPARACION'),
+            pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
           ]);
           
           // Para cambios de PENDIENTE a EN_PREPARACION, solo actualizar si el pedido está en EN_PREPARACION en el backend
@@ -1363,21 +1309,21 @@ const DepositoPanel = () => {
             if (pedidoEnBackend) {
               // El backend ya procesó el cambio, actualizar el cache
               setTodosLosPedidos({
-                PENDIENTE: pendientes.data || [],
+                PENDIENTE: pendientesConOrden.data || [],
                 EN_PREPARACION: enPreparacion.data || [],
               });
             } else {
               // Si el pedido no está en el backend aún, intentar de nuevo después de un delay más largo
               setTimeout(async () => {
                 try {
-                  const [pendientes2, enPreparacion2] = await Promise.all([
-                    pedidoService.obtenerPorEstado('PENDIENTE'),
+                  const [pendientesConOrden2, enPreparacion2] = await Promise.all([
+                    pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
                     pedidoService.obtenerPorEstado('EN_PREPARACION'),
                   ]);
                   const pedidoEnBackend2 = enPreparacion2.data?.find(p => p.id === pedidoId);
                   if (pedidoEnBackend2) {
                     setTodosLosPedidos({
-                      PENDIENTE: pendientes2.data || [],
+                      PENDIENTE: pendientesConOrden2.data || [],
                       EN_PREPARACION: enPreparacion2.data || [],
                     });
                   }
@@ -1386,12 +1332,21 @@ const DepositoPanel = () => {
                 }
               }, 1000);
             }
+          } else if (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') {
+            // Cuando vuelve de EN_PREPARACION a PENDIENTE, el backend mantiene el ordenPrioridadCarga
+            // por lo que el pedido vuelve a aparecer en la lista de pendientes con orden
+            setTodosLosPedidos({
+              PENDIENTE: pendientesConOrden.data || [],
+              EN_PREPARACION: enPreparacion.data || [],
+            });
+            setCantidadPlanillasSinOrden((sinOrden.data || []).length);
           } else {
             // Para otros cambios, actualizar normalmente
             setTodosLosPedidos({
-              PENDIENTE: pendientes.data || [],
+              PENDIENTE: pendientesConOrden.data || [],
               EN_PREPARACION: enPreparacion.data || [],
             });
+            setCantidadPlanillasSinOrden((sinOrden.data || []).length);
           }
         } catch (err) {
           console.error('Error al actualizar cache después de cambiar estado:', err);
@@ -1466,16 +1421,6 @@ const DepositoPanel = () => {
     }
   };
 
-  const getPrioridadColor = (prioridad) => {
-    const colors = {
-      BAJA: '#4CAF50',
-      NORMAL: '#2196F3',
-      ALTA: '#FF9800',
-      URGENTE: '#F44336',
-    };
-    return colors[prioridad] || '#666';
-  };
-
   const getEstadoTexto = (pedido) => {
     if (pedido.estado === 'REALIZADO') {
       return 'Finalizado';
@@ -1483,9 +1428,10 @@ const DepositoPanel = () => {
       if (!pedido.etapaPreparacion) {
         return 'En Preparación'; // Cuando recién pasa a EN_PREPARACION sin etapa
       } else if (pedido.etapaPreparacion === 'CONTROL') {
-        return 'Controlado';
+        // Mostrar estado según si está controlado o no
+        return pedido.controlado ? 'Controlado' : 'Sin Controlar';
       } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
-        return 'Pendiente de Carga';
+        return 'Controlado';
       }
       return 'En Preparación';
     } else if (pedido.estado === 'PENDIENTE') {
@@ -1501,7 +1447,8 @@ const DepositoPanel = () => {
       if (!pedido.etapaPreparacion) {
         return '#2196F3'; // Azul para "En Preparación" (sin etapa aún)
       } else if (pedido.etapaPreparacion === 'CONTROL') {
-        return '#2196F3'; // Azul para Controlado
+        // Rojo para Sin Controlar, Verde para Controlado
+        return pedido.controlado ? '#4CAF50' : '#F44336';
       } else if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
         return '#FF9800'; // Naranja para Pendiente de Carga
       }
@@ -1510,6 +1457,32 @@ const DepositoPanel = () => {
       return '#9E9E9E'; // Gris para Pendiente (diferente de Pendiente de Carga)
     }
     return '#666';
+  };
+
+  const getFechaEntregaTexto = (pedido) => {
+    if (!pedido.fechaEntrega) return null;
+    
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    
+    const fechaEntrega = new Date(pedido.fechaEntrega);
+    fechaEntrega.setHours(0, 0, 0, 0);
+    
+    const diffTime = fechaEntrega - hoy;
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) {
+      return 'Sale hoy';
+    } else if (diffDays === 1) {
+      return 'Sale mañana';
+    } else if (diffDays > 1) {
+      return fechaEntrega.toLocaleDateString('es-AR', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+    }
+    return null;
   };
 
   // Calcular cantidad de pedidos nuevos por estado
@@ -1532,7 +1505,7 @@ const DepositoPanel = () => {
     const pedidosEnPreparacion = todosLosPedidos.EN_PREPARACION || [];
     if (etapa === 'TODOS') return pedidosEnPreparacion.length;
     if (etapa === 'SIN_CONTROL') return pedidosEnPreparacion.filter(p => !p.etapaPreparacion).length;
-    if (etapa === 'CONTROL') return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'CONTROL').length;
+    if (etapa === 'CONTROL') return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'CONTROL' && !p.controlado).length;
     if (etapa === 'PENDIENTE_CARGA') return pedidosEnPreparacion.filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA').length;
     return 0;
   }, [todosLosPedidos]);
@@ -1782,6 +1755,35 @@ const DepositoPanel = () => {
       <div className="filtros">
         <div className="filtros-buttons">
           <button
+            className={filtroEstado === 'PRIORIDAD_CARGA' ? 'active' : ''}
+            onClick={() => setFiltroEstado('PRIORIDAD_CARGA')}
+            style={{ position: 'relative' }}
+          >
+            Prioridad de Carga
+            {cantidadPlanillasSinOrden > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '-8px',
+                  right: '-8px',
+                  backgroundColor: '#F44336',
+                  color: 'white',
+                  borderRadius: '50%',
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                }}
+              >
+                {cantidadPlanillasSinOrden}
+              </span>
+            )}
+          </button>
+          <button
             className={filtroEstado === 'PENDIENTE' ? 'active' : ''}
             onClick={() => setFiltroEstado('PENDIENTE')}
             style={{ position: 'relative' }}
@@ -1816,7 +1818,9 @@ const DepositoPanel = () => {
             style={{ position: 'relative' }}
           >
             En Preparación
-            {getCantidadTotal('EN_PREPARACION') > 0 && (
+            {(() => {
+              const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => !p.etapaPreparacion).length;
+              return cantidad > 0 ? (
               <span
                 style={{
                   position: 'absolute',
@@ -1835,9 +1839,74 @@ const DepositoPanel = () => {
                   boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                 }}
               >
-                {getCantidadTotal('EN_PREPARACION')}
+                  {cantidad}
               </span>
-            )}
+              ) : null;
+            })()}
+          </button>
+          <button
+            className={filtroEstado === 'CONTROL' ? 'active' : ''}
+            onClick={() => setFiltroEstado('CONTROL')}
+            style={{ position: 'relative' }}
+          >
+            Control
+            {(() => {
+              const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => p.etapaPreparacion === 'CONTROL' && !p.controlado).length;
+              return cantidad > 0 ? (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '-8px',
+                    right: '-8px',
+                    backgroundColor: '#F44336',
+                    color: 'white',
+                    borderRadius: '50%',
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                  }}
+                >
+                  {cantidad}
+                </span>
+              ) : null;
+            })()}
+          </button>
+          <button
+            className={filtroEstado === 'PENDIENTE_CARGA' ? 'active' : ''}
+            onClick={() => setFiltroEstado('PENDIENTE_CARGA')}
+            style={{ position: 'relative' }}
+          >
+            Pendiente de Carga
+            {(() => {
+              const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA').length;
+              return cantidad > 0 ? (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '-8px',
+                    right: '-8px',
+                    backgroundColor: '#F44336',
+                    color: 'white',
+                    borderRadius: '50%',
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                  }}
+                >
+                  {cantidad}
+                </span>
+              ) : null;
+            })()}
           </button>
           <button
             className={filtroEstado === 'REALIZADO' ? 'active' : ''}
@@ -1861,6 +1930,32 @@ const DepositoPanel = () => {
       </div>
 
       <div className="content-section">
+        {/* Tab de Prioridad de Carga */}
+        {filtroEstado === 'PRIORIDAD_CARGA' && (
+          <GestionPrioridadCarga 
+            onContadorCambio={(nuevaCantidad) => {
+              // Actualizar el contador inmediatamente cuando cambia desde GestionPrioridadCarga
+              setCantidadPlanillasSinOrden(nuevaCantidad);
+            }}
+            onPedidoAgregadoACola={(pedido) => {
+              // Actualizar optimistamente el contador de Pendientes cuando se agrega a la cola
+              setTodosLosPedidos(prev => ({
+                ...prev,
+                PENDIENTE: [...prev.PENDIENTE, pedido].sort((a, b) => 
+                  (a.ordenPrioridadCarga || 0) - (b.ordenPrioridadCarga || 0)
+                )
+              }));
+            }}
+            onPedidoRemovidoDeCola={(pedidoId) => {
+              // Actualizar optimistamente el contador de Pendientes cuando se remueve de la cola
+              setTodosLosPedidos(prev => ({
+                ...prev,
+                PENDIENTE: prev.PENDIENTE.filter(p => p.id !== pedidoId)
+              }));
+            }}
+          />
+        )}
+        
         {/* Tab de Equipos */}
         {filtroEstado === 'EQUIPOS' && (
           <div style={{
@@ -2346,22 +2441,28 @@ const DepositoPanel = () => {
                                 marginTop: '4px',
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: '8px'
+                                gap: '8px',
+                                flexWrap: 'wrap'
                               }}>
                                 <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
                                   hour: '2-digit',
                                   minute: '2-digit',
                                   hour12: false,
                                 })}</span>
+                                {getFechaEntregaTexto(pedido) && (
+                                  <span style={{ 
+                                    fontWeight: '600', 
+                                    color: '#2563eb',
+                                    backgroundColor: '#eff6ff',
+                                    padding: '2px 8px',
+                                    borderRadius: '4px'
+                                  }}>
+                                    📅 {getFechaEntregaTexto(pedido)}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
-                          <span
-                            className="prioridad-badge"
-                            style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
-                          >
-                            {pedido.prioridad}
-                          </span>
                         </div>
                         
                         <div className="pedido-info">
@@ -2480,7 +2581,7 @@ const DepositoPanel = () => {
                                     color: '#E65100',
                                     marginBottom: '4px'
                                   }}>
-                                    📦 Pend. de Carga
+                                    ✅ Controlado
                                   </div>
                                   <div style={{ 
                                     fontSize: '0.9rem', 
@@ -2575,10 +2676,10 @@ const DepositoPanel = () => {
           </div>
         )}
 
-        {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'EQUIPOS' && filtroEstado !== 'REALIZADO' && (
+        {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'EQUIPOS' && filtroEstado !== 'REALIZADO' && filtroEstado !== 'PRIORIDAD_CARGA' && (
           <div>
-            {/* Buscador para pestañas sin sub-pestañas (PENDIENTE) */}
-            {filtroEstado !== 'EN_PREPARACION' && (
+            {/* Buscador para PENDIENTE */}
+            {filtroEstado === 'PENDIENTE' && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -2664,311 +2765,24 @@ const DepositoPanel = () => {
                 </div>
               </div>
             )}
-            {/* Filtros de etapa para EN_PREPARACION */}
-            {filtroEstado === 'EN_PREPARACION' && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '20px',
-                padding: '20px 40px',
-                margin: '0 20px 25px 20px',
-                background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
-                border: '1px solid #e2e8f0',
-                borderRadius: '12px',
-                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
-              }}>
-                <div style={{ display: 'flex', gap: '10px', flex: 1 }}>
-                <button
-                  ref={(el) => { if (el) subPestanaButtonRefs.current[0] = el; }}
-                  onClick={() => setFiltroEtapaPreparacion('TODOS')}
-                  style={{
-                    padding: '10px 20px',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '0.95rem',
-                    fontWeight: filtroEtapaPreparacion === 'TODOS' ? '600' : '500',
-                    backgroundColor: filtroEtapaPreparacion === 'TODOS' ? '#0f766e' : '#f3f4f6',
-                    color: filtroEtapaPreparacion === 'TODOS' ? 'white' : '#666',
-                    transition: 'all 0.2s',
-                    position: 'relative',
-                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 0 ? '3px solid #2196F3' : 'none',
-                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 0 ? '2px' : '0',
-                  }}
-                >
-                  Todos
-                  {getCantidadPorEtapa('TODOS') > 0 && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: '-8px',
-                        right: '-8px',
-                        backgroundColor: '#F44336',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: '24px',
-                        height: '24px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                      }}
-                    >
-                      {getCantidadPorEtapa('TODOS')}
-                    </span>
-                  )}
-                </button>
-                <button
-                  ref={(el) => { if (el) subPestanaButtonRefs.current[1] = el; }}
-                  onClick={() => setFiltroEtapaPreparacion('SIN_CONTROL')}
-                  style={{
-                    padding: '10px 20px',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '0.95rem',
-                    fontWeight: filtroEtapaPreparacion === 'SIN_CONTROL' ? '600' : '500',
-                    backgroundColor: filtroEtapaPreparacion === 'SIN_CONTROL' ? '#0f766e' : '#f3f4f6',
-                    color: filtroEtapaPreparacion === 'SIN_CONTROL' ? 'white' : '#666',
-                    transition: 'all 0.2s',
-                    position: 'relative',
-                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 1 ? '3px solid #2196F3' : 'none',
-                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 1 ? '2px' : '0',
-                  }}
-                >
-                  Sin Control
-                  {getCantidadPorEtapa('SIN_CONTROL') > 0 && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: '-8px',
-                        right: '-8px',
-                        backgroundColor: '#F44336',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: '24px',
-                        height: '24px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                      }}
-                    >
-                      {getCantidadPorEtapa('SIN_CONTROL')}
-                    </span>
-                  )}
-                </button>
-                <button
-                  ref={(el) => { if (el) subPestanaButtonRefs.current[2] = el; }}
-                  onClick={() => setFiltroEtapaPreparacion('CONTROL')}
-                  style={{
-                    padding: '10px 20px',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '0.95rem',
-                    fontWeight: filtroEtapaPreparacion === 'CONTROL' ? '600' : '500',
-                    backgroundColor: filtroEtapaPreparacion === 'CONTROL' ? '#0f766e' : '#f3f4f6',
-                    color: filtroEtapaPreparacion === 'CONTROL' ? 'white' : '#666',
-                    transition: 'all 0.2s',
-                    position: 'relative',
-                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 2 ? '3px solid #2196F3' : 'none',
-                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 2 ? '2px' : '0',
-                  }}
-                >
-                  Control
-                  {getCantidadPorEtapa('CONTROL') > 0 && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: '-8px',
-                        right: '-8px',
-                        backgroundColor: '#F44336',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: '24px',
-                        height: '24px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                      }}
-                    >
-                      {getCantidadPorEtapa('CONTROL')}
-                    </span>
-                  )}
-                </button>
-                <button
-                  ref={(el) => { if (el) subPestanaButtonRefs.current[3] = el; }}
-                  onClick={() => setFiltroEtapaPreparacion('PENDIENTE_CARGA')}
-                  style={{
-                    padding: '10px 20px',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '0.95rem',
-                    fontWeight: filtroEtapaPreparacion === 'PENDIENTE_CARGA' ? '600' : '500',
-                    backgroundColor: filtroEtapaPreparacion === 'PENDIENTE_CARGA' ? '#0f766e' : '#f3f4f6',
-                    color: filtroEtapaPreparacion === 'PENDIENTE_CARGA' ? 'white' : '#666',
-                    transition: 'all 0.2s',
-                    position: 'relative',
-                    outline: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 3 ? '3px solid #2196F3' : 'none',
-                    outlineOffset: enModoNavegacionSubPestanas && subPestanaSeleccionadaIndex === 3 ? '2px' : '0',
-                  }}
-                >
-                  Pendiente de Carga
-                  {getCantidadPorEtapa('PENDIENTE_CARGA') > 0 && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: '-8px',
-                        right: '-8px',
-                        backgroundColor: '#F44336',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: '24px',
-                        height: '24px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                      }}
-                    >
-                      {getCantidadPorEtapa('PENDIENTE_CARGA')}
-                    </span>
-                  )}
-                </button>
-                </div>
-                {/* Buscador avanzado */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  flex: '0 0 400px',
-                  position: 'relative'
-                }}>
-                  <span style={{ fontSize: '1.2rem' }}>🔍</span>
-                  <input
-                    type="text"
-                    placeholder="Buscar por planilla, transporte, zona, vuelta..."
-                    value={textoBusqueda}
-                    onChange={(e) => setTextoBusqueda(e.target.value)}
-                    style={{
-                      flex: 1,
-                      padding: '10px 15px',
-                      border: '2px solid #e0e0e0',
-                      borderRadius: '8px',
-                      fontSize: '0.95rem',
-                      outline: 'none',
-                      transition: 'all 0.2s',
-                    }}
-                    onFocus={(e) => {
-                      e.target.style.borderColor = '#0f766e';
-                      e.target.style.boxShadow = '0 0 0 3px rgba(15, 118, 110, 0.1)';
-                    }}
-                    onBlur={(e) => {
-                      e.target.style.borderColor = '#e0e0e0';
-                      e.target.style.boxShadow = 'none';
-                    }}
-                  />
-                  {textoBusqueda && (
-                    <button
-                      onClick={() => setTextoBusqueda('')}
-                      style={{
-                        padding: '8px 12px',
-                        border: 'none',
-                        borderRadius: '6px',
-                        backgroundColor: '#f3f4f6',
-                        color: '#666',
-                        cursor: 'pointer',
-                        fontSize: '0.9rem',
-                        transition: 'all 0.2s',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.target.style.backgroundColor = '#e5e7eb';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.backgroundColor = '#f3f4f6';
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
           <div className="pedidos-grid">
             {pedidos.filter(pedido => {
-              if (pedido.estado !== filtroEstado) return false;
-              // Si estamos en EN_PREPARACION, aplicar filtro de etapa
+              // Verificar estado y etapa según la pestaña activa
               if (filtroEstado === 'EN_PREPARACION') {
-                if (filtroEtapaPreparacion === 'TODOS') {
-                  // Aplicar búsqueda
-                  if (textoBusqueda.trim()) {
-                    const busqueda = textoBusqueda.toLowerCase().trim();
-                    const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
-                    const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
-                    const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
-                    const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
-                    return matchPlanilla || matchTransporte || matchZona || matchVuelta;
-                  }
-                  return true;
-                }
-                if (filtroEtapaPreparacion === 'SIN_CONTROL') {
-                  if (!pedido.etapaPreparacion) {
-                    // Aplicar búsqueda
-                    if (textoBusqueda.trim()) {
-                      const busqueda = textoBusqueda.toLowerCase().trim();
-                      const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
-                      const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
-                      const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
-                      const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
-                      return matchPlanilla || matchTransporte || matchZona || matchVuelta;
-                    }
-                    return true;
-                  }
-                  return false;
-                }
-                if (filtroEtapaPreparacion === 'CONTROL') {
-                  if (pedido.etapaPreparacion === 'CONTROL') {
-                    // Aplicar búsqueda
-                    if (textoBusqueda.trim()) {
-                      const busqueda = textoBusqueda.toLowerCase().trim();
-                      const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
-                      const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
-                      const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
-                      const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
-                      return matchPlanilla || matchTransporte || matchZona || matchVuelta;
-                    }
-                    return true;
-                  }
-                  return false;
-                }
-                if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') {
-                  if (pedido.etapaPreparacion === 'PENDIENTE_CARGA') {
-                    // Aplicar búsqueda
-                    if (textoBusqueda.trim()) {
-                      const busqueda = textoBusqueda.toLowerCase().trim();
-                      const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
-                      const matchTransporte = (pedido.transportistaNombre || pedido.transportista || '').toLowerCase().includes(busqueda);
-                      const matchZona = (pedido.zonaNombre || '').toLowerCase().includes(busqueda);
-                      const matchVuelta = (pedido.vueltaNombre || '').toLowerCase().includes(busqueda);
-                      return matchPlanilla || matchTransporte || matchZona || matchVuelta;
-                    }
-                    return true;
-                  }
-                  return false;
-                }
+                // Solo pedidos EN_PREPARACION sin etapaPreparacion
+                if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion) return false;
+              } else if (filtroEstado === 'CONTROL') {
+                // Solo pedidos EN_PREPARACION con etapaPreparacion = CONTROL y que NO estén controlados (sin controlar)
+                if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion !== 'CONTROL' || pedido.controlado) return false;
+              } else if (filtroEstado === 'PENDIENTE_CARGA') {
+                // Solo pedidos EN_PREPARACION con etapaPreparacion = PENDIENTE_CARGA
+                if (pedido.estado !== 'EN_PREPARACION' || pedido.etapaPreparacion !== 'PENDIENTE_CARGA') return false;
+              } else {
+                // Para otras pestañas, verificar estado normal
+                if (pedido.estado !== filtroEstado) return false;
               }
-              // Para otras pestañas, también aplicar búsqueda si existe
+              
+              // Aplicar búsqueda si existe
               if (textoBusqueda.trim()) {
                 const busqueda = textoBusqueda.toLowerCase().trim();
                 const matchPlanilla = pedido.numeroPlanilla?.toLowerCase().includes(busqueda);
@@ -3025,22 +2839,28 @@ const DepositoPanel = () => {
                       marginTop: '4px',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '8px'
+                      gap: '8px',
+                      flexWrap: 'wrap'
                     }}>
                       <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
                         hour: '2-digit',
                         minute: '2-digit',
                         hour12: false,
                       })}</span>
+                      {getFechaEntregaTexto(pedido) && (
+                        <span style={{ 
+                          fontWeight: '600', 
+                          color: '#2563eb',
+                          backgroundColor: '#eff6ff',
+                          padding: '2px 8px',
+                          borderRadius: '4px'
+                        }}>
+                          📅 {getFechaEntregaTexto(pedido)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-                <span
-                  className="prioridad-badge"
-                  style={{ backgroundColor: getPrioridadColor(pedido.prioridad) }}
-                >
-                  {pedido.prioridad}
-                </span>
               </div>
               
               <div className="pedido-info">
@@ -3090,6 +2910,48 @@ const DepositoPanel = () => {
                   gap: '16px',
                   marginBottom: '16px'
                 }}>
+                  {filtroEstado === 'PENDIENTE' ? (
+                    <>
+                      {pedido.fechaEntrega && (
+                        <div className="info-item">
+                          <div className="info-label">📅 Fecha de Despacho</div>
+                          <div className="info-value">
+                            {(() => {
+                              const hoy = new Date();
+                              hoy.setHours(0, 0, 0, 0);
+                              const fechaEntrega = new Date(pedido.fechaEntrega);
+                              fechaEntrega.setHours(0, 0, 0, 0);
+                              const diffTime = fechaEntrega - hoy;
+                              const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                              
+                              if (diffDays === 0) {
+                                return 'Hoy';
+                              } else if (diffDays === 1) {
+                                return 'Mañana';
+                              } else {
+                                return fechaEntrega.toLocaleDateString('es-AR', {
+                                  weekday: 'long',
+                                  day: 'numeric',
+                                  month: 'long',
+                                  year: 'numeric'
+                                });
+                              }
+                            })()}
+                          </div>
+                        </div>
+                      )}
+                      <div className="info-item">
+                        <div className="info-label">📋 Estado</div>
+                      <span
+                        className="estado-badge"
+                        style={{ backgroundColor: getEstadoColor(pedido) }}
+                      >
+                        {getEstadoTexto(pedido)}
+                      </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
                   <div className="info-item">
                     <div className="info-label">👥 Equipo</div>
                     <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
@@ -3103,6 +2965,8 @@ const DepositoPanel = () => {
                     {getEstadoTexto(pedido)}
                   </span>
                   </div>
+                    </>
+                  )}
                 </div>
                 
                 {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
@@ -3140,7 +3004,8 @@ const DepositoPanel = () => {
               </div>
               {pedido.estado !== 'REALIZADO' && (
                 <div className="pedido-actions">
-                  {/* Asignar Equipo disponible en todas las etapas hasta finalizar */}
+                  {/* Asignar Equipo disponible en todas las etapas hasta finalizar, EXCEPTO en PENDIENTE */}
+                  {filtroEstado !== 'PENDIENTE' && (
                     <div className="action-group" style={{ position: 'relative' }}>
                       <label>Asignar Equipo:</label>
                       <select
@@ -3226,6 +3091,7 @@ const DepositoPanel = () => {
                         </div>
                       )}
                     </div>
+                  )}
                   <div className="action-group">
                     {pedido.estado === 'PENDIENTE' && (
                       <button
@@ -3265,9 +3131,9 @@ const DepositoPanel = () => {
                         Preparar
                       </button>
                     )}
-                    {pedido.estado === 'EN_PREPARACION' && (
+                    {/* Botones para EN_PREPARACION (sin etapaPreparacion) */}
+                    {filtroEstado === 'EN_PREPARACION' && pedido.estado === 'EN_PREPARACION' && !pedido.etapaPreparacion && (
                       <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
-                        {pedido.etapaPreparacion !== 'PENDIENTE_CARGA' && (
                         <button
                           ref={(el) => {
                             if (el) volverPendienteButtonRefs.current[pedido.id] = el;
@@ -3310,7 +3176,6 @@ const DepositoPanel = () => {
                           <span style={{ marginRight: '6px' }}>↩️</span>
                           Volver a Pendiente
                         </button>
-                        )}
                         <button
                           ref={(el) => {
                             if (el) finalizarButtonRefs.current[pedido.id] = el;
@@ -3319,13 +3184,8 @@ const DepositoPanel = () => {
                           className="btn-success"
                           onClick={() => handleAvanzarEtapa(pedido.id)}
                           style={{
-                            flex: pedido.etapaPreparacion === 'PENDIENTE_CARGA' ? 1 : 1,
-                            width: pedido.etapaPreparacion === 'PENDIENTE_CARGA' ? '100%' : 'auto',
-                            background: !pedido.etapaPreparacion 
-                              ? 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)' // Azul para "Control"
-                              : pedido.etapaPreparacion === 'CONTROL' 
-                              ? 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)' // Naranja para "Pendiente de Carga"
-                              : 'linear-gradient(135deg, #4CAF50 0%, #388E3C 100%)', // Verde para "Finalizar"
+                            flex: 1,
+                            background: 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)',
                             color: 'white',
                             border: 'none',
                             padding: '12px 28px',
@@ -3334,11 +3194,7 @@ const DepositoPanel = () => {
                             fontSize: '14px',
                             fontWeight: '600',
                             letterSpacing: '0.3px',
-                            boxShadow: !pedido.etapaPreparacion 
-                              ? '0 4px 12px rgba(33, 150, 243, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)'
-                              : pedido.etapaPreparacion === 'CONTROL'
-                              ? '0 4px 12px rgba(255, 152, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)'
-                              : '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)',
+                            boxShadow: '0 4px 12px rgba(33, 150, 243, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)',
                             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                             position: 'relative',
                             overflow: 'hidden',
@@ -3347,68 +3203,109 @@ const DepositoPanel = () => {
                           }}
                           onMouseEnter={(e) => {
                             e.target.style.transform = 'translateY(-2px)';
-                            if (!pedido.etapaPreparacion) {
                               e.target.style.background = 'linear-gradient(135deg, #42A5F5 0%, #1E88E5 100%)';
                               e.target.style.boxShadow = '0 6px 16px rgba(33, 150, 243, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
-                            } else if (pedido.etapaPreparacion === 'CONTROL') {
-                              e.target.style.background = 'linear-gradient(135deg, #FFA726 0%, #FB8C00 100%)';
-                              e.target.style.boxShadow = '0 6px 16px rgba(255, 152, 0, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
-                            } else {
-                              e.target.style.background = 'linear-gradient(135deg, #66BB6A 0%, #43A047 100%)';
-                              e.target.style.boxShadow = '0 6px 16px rgba(76, 175, 80, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
-                            }
                           }}
                           onMouseLeave={(e) => {
                             e.target.style.transform = 'translateY(0)';
-                            if (!pedido.etapaPreparacion) {
                               e.target.style.background = 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)';
                               e.target.style.boxShadow = '0 4px 12px rgba(33, 150, 243, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
-                            } else if (pedido.etapaPreparacion === 'CONTROL') {
-                              e.target.style.background = 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)';
-                              e.target.style.boxShadow = '0 4px 12px rgba(255, 152, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
-                            } else {
-                              e.target.style.background = 'linear-gradient(135deg, #4CAF50 0%, #388E3C 100%)';
-                              e.target.style.boxShadow = '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
-                            }
                           }}
                           onFocus={() => {
                             setBotonSeleccionadoEnPreparacion({ ...botonSeleccionadoEnPreparacion, [pedido.id]: 'finalizar' });
                           }}
                         >
-                          {!pedido.etapaPreparacion ? (
-                            <>
                               <span style={{ marginRight: '6px' }}>✓</span>
-                              Control
-                            </>
-                          ) : pedido.etapaPreparacion === 'CONTROL' ? (
-                            <>
-                              <span style={{ marginRight: '6px' }}>📦</span>
-                              Pendiente de Carga
-                            </>
-                          ) : (
-                            <>
-                              <span style={{ marginRight: '6px' }}>✅</span>
-                          Finalizar
-                            </>
-                          )}
+                          Finalizar Preparación
                         </button>
                       </div>
+                    )}
+                    {/* Botones para CONTROL (solo mostrar si no está controlado) */}
+                    {filtroEstado === 'CONTROL' && pedido.estado === 'EN_PREPARACION' && pedido.etapaPreparacion === 'CONTROL' && !pedido.controlado && (
+                      <button
+                        ref={(el) => {
+                          if (el) finalizarButtonRefs.current[pedido.id] = el;
+                        }}
+                        data-pedido-id={pedido.id}
+                        className="btn-success"
+                        onClick={() => handleAvanzarEtapa(pedido.id)}
+                        style={{
+                          width: '100%',
+                          background: 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)',
+                          color: 'white',
+                          border: 'none',
+                          padding: '12px 28px',
+                          borderRadius: '10px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          letterSpacing: '0.3px',
+                          boxShadow: '0 4px 12px rgba(255, 152, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)',
+                          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                          position: 'relative',
+                          overflow: 'hidden',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.transform = 'translateY(-2px)';
+                          e.target.style.background = 'linear-gradient(135deg, #FFA726 0%, #FB8C00 100%)';
+                          e.target.style.boxShadow = '0 6px 16px rgba(255, 152, 0, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.transform = 'translateY(0)';
+                          e.target.style.background = 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)';
+                          e.target.style.boxShadow = '0 4px 12px rgba(255, 152, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
+                        }}
+                      >
+                        <span style={{ marginRight: '6px' }}>✓</span>
+                        Controlado
+                      </button>
+                    )}
+                    {/* Botones para PENDIENTE_CARGA */}
+                    {filtroEstado === 'PENDIENTE_CARGA' && pedido.estado === 'EN_PREPARACION' && pedido.etapaPreparacion === 'PENDIENTE_CARGA' && (
+                      <button
+                        ref={(el) => {
+                          if (el) finalizarButtonRefs.current[pedido.id] = el;
+                        }}
+                        data-pedido-id={pedido.id}
+                        className="btn-success"
+                        onClick={() => handleAvanzarEtapa(pedido.id)}
+                        style={{
+                          width: '100%',
+                          background: 'linear-gradient(135deg, #4CAF50 0%, #388E3C 100%)',
+                          color: 'white',
+                          border: 'none',
+                          padding: '12px 28px',
+                          borderRadius: '10px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          letterSpacing: '0.3px',
+                          boxShadow: '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)',
+                          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                          position: 'relative',
+                          overflow: 'hidden',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.transform = 'translateY(-2px)';
+                          e.target.style.background = 'linear-gradient(135deg, #66BB6A 0%, #43A047 100%)';
+                          e.target.style.boxShadow = '0 6px 16px rgba(76, 175, 80, 0.4), 0 4px 6px rgba(0, 0, 0, 0.15)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.transform = 'translateY(0)';
+                          e.target.style.background = 'linear-gradient(135deg, #4CAF50 0%, #388E3C 100%)';
+                          e.target.style.boxShadow = '0 4px 12px rgba(76, 175, 80, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1)';
+                        }}
+                      >
+                              <span style={{ marginRight: '6px' }}>✅</span>
+                          Finalizar
+                        </button>
                     )}
                   </div>
                 </div>
               )}
             </div>
           ))}
-          {pedidos.filter(pedido => {
-            if (pedido.estado !== filtroEstado) return false;
-            if (filtroEstado === 'EN_PREPARACION') {
-              if (filtroEtapaPreparacion === 'TODOS') return true;
-              if (filtroEtapaPreparacion === 'SIN_CONTROL') return !pedido.etapaPreparacion;
-              if (filtroEtapaPreparacion === 'CONTROL') return pedido.etapaPreparacion === 'CONTROL';
-              if (filtroEtapaPreparacion === 'PENDIENTE_CARGA') return pedido.etapaPreparacion === 'PENDIENTE_CARGA';
-            }
-            return true;
-          }).length === 0 && !loading && (
+          {pedidos.length === 0 && !loading && (
               <div className="no-pedidos" style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -3434,13 +3331,11 @@ const DepositoPanel = () => {
                   {filtroEstado === 'PENDIENTE' 
                     ? 'No hay pedidos pendientes' 
                     : filtroEstado === 'EN_PREPARACION' 
-                    ? filtroEtapaPreparacion === 'TODOS' 
                       ? 'No hay pedidos en preparación'
-                      : filtroEtapaPreparacion === 'SIN_CONTROL'
-                      ? 'No hay pedidos sin control'
-                      : filtroEtapaPreparacion === 'CONTROL'
+                    : filtroEstado === 'CONTROL'
                       ? 'No hay pedidos en control'
-                      : 'No hay pedidos pendientes de carga'
+                    : filtroEstado === 'PENDIENTE_CARGA'
+                    ? 'No hay pedidos pendientes de carga'
                     : 'No hay pedidos'}
                 </h3>
                 <p style={{
