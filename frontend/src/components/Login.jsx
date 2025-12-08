@@ -15,7 +15,11 @@ const Login = () => {
   useEffect(() => {
     // Si hay usuario, redirigir al panel correspondiente
     if (user) {
-      navigate(user.rol === 'ADMIN' ? '/admin' : '/deposito', { replace: true });
+      if (user.rol === 'ADMIN_PRINCIPAL') {
+        navigate('/admin', { replace: true });
+      } else if (['ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL'].includes(user.rol)) {
+        navigate('/deposito', { replace: true });
+      }
     }
   }, [user, navigate]);
 
@@ -40,7 +44,11 @@ const Login = () => {
     const result = await login(username, password);
     if (result.success) {
       const userData = JSON.parse(localStorage.getItem('user'));
-      navigate(userData.rol === 'ADMIN' ? '/admin' : '/deposito');
+      if (userData.rol === 'ADMIN_PRINCIPAL') {
+        navigate('/admin');
+      } else if (['ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL'].includes(userData.rol)) {
+        navigate('/deposito');
+      }
     } else {
       setError(result.error);
     }
@@ -89,7 +97,7 @@ const Login = () => {
             }} 
           />
         </div>
-        <h1>Panel Central</h1>
+        <h1>Orden de Cargas</h1>
         <h2>Iniciar Sesión</h2>
         <form onSubmit={handleSubmit}>
           <div className="form-group">

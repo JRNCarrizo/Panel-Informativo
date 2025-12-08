@@ -33,5 +33,7 @@ public class PedidoDTO {
     private LocalDate fechaEntrega; // Fecha en que se ejecutará la vuelta
     private Integer ordenPrioridadCarga; // Orden en la cola de prioridad de carga
     private Boolean controlado; // Indica si el pedido ha sido controlado cuando está en etapa CONTROL
+    private String controladoPor; // Nombre del usuario que hizo el control
+    private String finalizadoPor; // Nombre del usuario que finalizó el pedido
 }
 

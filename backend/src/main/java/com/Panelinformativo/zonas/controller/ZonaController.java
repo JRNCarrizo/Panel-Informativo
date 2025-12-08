@@ -18,7 +18,7 @@ public class ZonaController {
     private final ZonaService zonaService;
 
     @PostMapping("/crear-o-obtener")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<ZonaDTO> crearObtenerZona(@RequestBody Map<String, String> body) {
         String nombre = body.get("nombre");
         if (nombre == null || nombre.trim().isEmpty()) {
@@ -28,25 +28,25 @@ public class ZonaController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<ZonaDTO>> obtenerTodasLasZonas() {
         return ResponseEntity.ok(zonaService.obtenerTodasLasZonas());
     }
 
     @GetMapping("/activas")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<ZonaDTO>> obtenerZonasActivas() {
         return ResponseEntity.ok(zonaService.obtenerZonasActivas());
     }
 
     @GetMapping("/buscar")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<ZonaDTO>> buscarZonas(@RequestParam String q) {
         return ResponseEntity.ok(zonaService.buscarZonas(q));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<ZonaDTO> obtenerZonaPorId(@PathVariable Long id) {
         try {
             return ResponseEntity.ok(zonaService.obtenerZonaPorId(id));
@@ -56,7 +56,7 @@ public class ZonaController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> actualizarZona(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         try {
             String nombre = body.get("nombre") != null ? (String) body.get("nombre") : null;
@@ -68,7 +68,7 @@ public class ZonaController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> eliminarZona(@PathVariable Long id) {
         try {
             zonaService.eliminarZona(id);

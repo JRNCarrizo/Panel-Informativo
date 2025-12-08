@@ -22,7 +22,7 @@ public class MensajeController {
     private final MensajeService mensajeService;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<MensajeDTO> crearMensaje(
             @Valid @RequestBody MensajeCreateDTO dto,
             Authentication authentication) {
@@ -34,32 +34,38 @@ public class MensajeController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<List<MensajeDTO>> obtenerMensajesDelDia(Authentication authentication) {
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
         Usuario usuario = (Usuario) userDetails;
         Rol.TipoRol rolUsuario = usuario.getRol().getNombre();
         
+        // El rol ya es ADMIN_PRINCIPAL o ADMIN_DEPOSITO, no necesita normalización
+        Rol.TipoRol rolParaMensajes = rolUsuario;
+        
         // Limpiar mensajes antiguos antes de obtener los del día
         mensajeService.limpiarMensajesAntiguosSiEsNuevoDia();
         
-        List<MensajeDTO> mensajes = mensajeService.obtenerMensajesDelDia(rolUsuario);
+        List<MensajeDTO> mensajes = mensajeService.obtenerMensajesDelDia(rolParaMensajes, rolUsuario);
         return ResponseEntity.ok(mensajes);
     }
 
     @GetMapping("/no-leidos/count")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<Long> contarMensajesNoLeidos(Authentication authentication) {
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
         Usuario usuario = (Usuario) userDetails;
         Rol.TipoRol rolUsuario = usuario.getRol().getNombre();
         
-        long count = mensajeService.contarMensajesNoLeidos(rolUsuario);
+        // El rol ya es ADMIN_PRINCIPAL o ADMIN_DEPOSITO, no necesita normalización
+        Rol.TipoRol rolParaMensajes = rolUsuario;
+        
+        long count = mensajeService.contarMensajesNoLeidos(rolParaMensajes);
         return ResponseEntity.ok(count);
     }
 
     @PutMapping("/{id}/leido")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<Void> marcarComoLeido(
             @PathVariable Long id,
             Authentication authentication) {
@@ -67,18 +73,24 @@ public class MensajeController {
         Usuario usuario = (Usuario) userDetails;
         Rol.TipoRol rolUsuario = usuario.getRol().getNombre();
         
-        mensajeService.marcarMensajeComoLeido(id, rolUsuario);
+        // El rol ya es ADMIN_PRINCIPAL o ADMIN_DEPOSITO, no necesita normalización
+        Rol.TipoRol rolParaMensajes = rolUsuario;
+        
+        mensajeService.marcarMensajeComoLeido(id, rolParaMensajes);
         return ResponseEntity.ok().build();
     }
 
     @PutMapping("/marcar-todos-leidos")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<Void> marcarTodosComoLeidos(Authentication authentication) {
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
         Usuario usuario = (Usuario) userDetails;
         Rol.TipoRol rolUsuario = usuario.getRol().getNombre();
         
-        mensajeService.marcarTodosComoLeidos(rolUsuario);
+        // El rol ya es ADMIN_PRINCIPAL o ADMIN_DEPOSITO, no necesita normalización
+        Rol.TipoRol rolParaMensajes = rolUsuario;
+        
+        mensajeService.marcarTodosComoLeidos(rolParaMensajes);
         return ResponseEntity.ok().build();
     }
 }

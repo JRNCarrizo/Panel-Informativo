@@ -4,6 +4,7 @@ import { pedidoService } from '../services/pedidoService';
 import { grupoService } from '../services/grupoService';
 import { transportistaService } from '../services/transportistaService';
 import { mensajeService } from '../services/mensajeService';
+import { usuarioService } from '../services/usuarioService';
 import { connectWebSocket, disconnectWebSocket } from '../services/websocketService';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
@@ -16,7 +17,11 @@ const DepositoPanel = () => {
   const [pedidos, setPedidos] = useState([]);
   const [grupos, setGrupos] = useState([]);
   const [transportistas, setTransportistas] = useState([]);
-  const [filtroEstado, setFiltroEstado] = useState('PRIORIDAD_CARGA'); // 'PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'TRANSPORTISTAS', 'EQUIPOS'
+  // Estado inicial según el rol: PLANILLERO y CONTROL empiezan en PENDIENTE, otros en PRIORIDAD_CARGA
+  const [filtroEstado, setFiltroEstado] = useState(() => {
+    const savedUser = JSON.parse(localStorage.getItem('user') || '{}');
+    return (savedUser?.rol === 'PLANILLERO' || savedUser?.rol === 'CONTROL') ? 'PENDIENTE' : 'PRIORIDAD_CARGA';
+  }); // 'PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'TRANSPORTISTAS', 'ROLES'
   const [textoBusqueda, setTextoBusqueda] = useState(''); // Texto de búsqueda avanzada
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -48,9 +53,18 @@ const DepositoPanel = () => {
   });
   // Estado para rastrear cantidad de planillas sin orden (para el indicador de Prioridad de Carga)
   const [cantidadPlanillasSinOrden, setCantidadPlanillasSinOrden] = useState(0);
-  // Estado para crear equipos
+  // Estado para crear equipos (mantener para compatibilidad con otras secciones)
   const [showGrupoModal, setShowGrupoModal] = useState(false);
   const [grupoForm, setGrupoForm] = useState({ nombre: '' });
+  // Estado para crear usuarios con roles
+  const [showUsuarioModal, setShowUsuarioModal] = useState(false);
+  const [usuarioForm, setUsuarioForm] = useState({
+    username: '',
+    password: '',
+    nombreCompleto: '',
+    rol: 'PLANILLERO', // Valor por defecto
+  });
+  const [usuariosRoles, setUsuariosRoles] = useState([]); // Para PLANILLERO y CONTROL
   // Estado para el modal de resumen
   const [showResumenModal, setShowResumenModal] = useState(false);
   const [pedidosResumen, setPedidosResumen] = useState([]);
@@ -66,6 +80,11 @@ const DepositoPanel = () => {
   const isInitialLoad = useRef(true);
   // Ref para el campo del formulario de equipos
   const grupoNombreRef = useRef(null);
+  // Refs para los campos del formulario de usuarios
+  const usernameRef = useRef(null);
+  const nombreCompletoRef = useRef(null);
+  const passwordRef = useRef(null);
+  const rolRef = useRef(null);
   // Estado para rastrear el índice del pedido seleccionado en Pendientes
   const [pedidoSeleccionadoIndex, setPedidoSeleccionadoIndex] = useState(-1);
   // Estado para saber si estamos en modo navegación de registros
@@ -111,8 +130,8 @@ const DepositoPanel = () => {
         // Cargar datos según la pestaña activa
         if (filtroEstado === 'TRANSPORTISTAS') {
           await cargarTransportistas();
-        } else if (filtroEstado === 'EQUIPOS') {
-          await cargarGrupos();
+        } else if (filtroEstado === 'ROLES') {
+          await cargarUsuariosRoles();
         } else if (filtroEstado === 'PRIORIDAD_CARGA') {
           // La pestaña de Prioridad de Carga maneja su propia carga de datos
           // No hacer nada aquí
@@ -179,9 +198,9 @@ const DepositoPanel = () => {
           cargarTransportistas().catch(err => {
             console.error('Error al recargar transportistas desde WebSocket:', err);
           });
-        } else if (filtroEstado === 'EQUIPOS') {
-          cargarGrupos().catch(err => {
-            console.error('Error al recargar equipos desde WebSocket:', err);
+        } else if (filtroEstado === 'ROLES') {
+          cargarUsuariosRoles().catch(err => {
+            console.error('Error al recargar usuarios desde WebSocket:', err);
           });
         } else if (filtroEstado === 'PRIORIDAD_CARGA') {
           // La pestaña de Prioridad de Carga maneja su propia recarga vía WebSocket
@@ -214,20 +233,35 @@ const DepositoPanel = () => {
         // Usar un pequeño delay para agrupar múltiples actualizaciones (cuando se actualiza el orden de varios pedidos)
         clearTimeout(actualizarContadorPlanillasSinOrden.cacheTimeout);
         actualizarContadorPlanillasSinOrden.cacheTimeout = setTimeout(() => {
-        Promise.all([
-            pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
+          // PLANILLERO y CONTROL no tienen acceso a obtenerPendientesSinOrden
+          if (user?.rol === 'PLANILLERO' || user?.rol === 'CONTROL') {
+            Promise.all([
+              pedidoService.obtenerConOrdenPrioridadCarga(),
           pedidoService.obtenerPorEstado('EN_PREPARACION'),
-            pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
-          ]).then(([pendientesConOrden, enPreparacion, sinOrden]) => {
+            ]).then(([pendientesConOrden, enPreparacion]) => {
           setTodosLosPedidos({
               PENDIENTE: pendientesConOrden.data || [],
             EN_PREPARACION: enPreparacion.data || [],
           });
-            // Actualizar cantidad de planillas sin orden para el indicador (siempre, incluso si no estamos en esa pestaña)
-            setCantidadPlanillasSinOrden((sinOrden.data || []).length);
         }).catch(err => {
           console.error('Error al actualizar cache desde WebSocket:', err);
-        });
+            });
+          } else {
+            Promise.all([
+              pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
+              pedidoService.obtenerPorEstado('EN_PREPARACION'),
+              pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
+            ]).then(([pendientesConOrden, enPreparacion, sinOrden]) => {
+              setTodosLosPedidos({
+                PENDIENTE: pendientesConOrden.data || [],
+                EN_PREPARACION: enPreparacion.data || [],
+              });
+              // Actualizar cantidad de planillas sin orden para el indicador (siempre, incluso si no estamos en esa pestaña)
+              setCantidadPlanillasSinOrden((sinOrden.data || []).length);
+            }).catch(err => {
+              console.error('Error al actualizar cache desde WebSocket:', err);
+            });
+          }
         }, 200); // Delay reducido a 200ms para actualizaciones más rápidas
       }
     });
@@ -315,6 +349,15 @@ const DepositoPanel = () => {
       }
     };
   }, [user?.rol]);
+
+  // Verificar que PLANILLERO y CONTROL no accedan a secciones no permitidas
+  useEffect(() => {
+    if (user?.rol === 'PLANILLERO' && ['PRIORIDAD_CARGA', 'CONTROL', 'PENDIENTE_CARGA', 'ROLES', 'TRANSPORTISTAS'].includes(filtroEstado)) {
+      setFiltroEstado('PENDIENTE');
+    } else if (user?.rol === 'CONTROL' && ['PRIORIDAD_CARGA', 'ROLES', 'TRANSPORTISTAS'].includes(filtroEstado)) {
+      setFiltroEstado('PENDIENTE');
+    }
+  }, [user?.rol, filtroEstado]);
 
   // Resetear el índice del pedido seleccionado y el modo navegación al cambiar de pestaña
   useEffect(() => {
@@ -462,15 +505,18 @@ const DepositoPanel = () => {
               return;
             }
 
-            // Enter para activar el botón Preparar del registro
-            if (event.key === 'Enter' && pedidosPendientes.length > 0) {
+            // Enter para activar el botón Preparar del registro (solo para PLANILLERO)
+            if (event.key === 'Enter' && pedidosPendientes.length > 0 && user?.rol === 'PLANILLERO') {
               event.preventDefault();
               const pedidoId = pedidosPendientes[pedidoSeleccionadoIndex].id;
+              const pedido = pedidosPendientes[pedidoSeleccionadoIndex];
               
-              // Activar directamente el botón Preparar
-                  const prepararButton = prepararButtonRefs.current[pedidoId];
-                  if (prepararButton) {
-                    prepararButton.click();
+              // Mostrar confirmación antes de activar el botón Preparar
+              if (window.confirm(`¿Estás seguro de que deseas preparar la planilla ${pedido.numeroPlanilla}?\n\nLa planilla pasará a estado "En Preparación".`)) {
+                const prepararButton = prepararButtonRefs.current[pedidoId];
+                if (prepararButton) {
+                  prepararButton.click();
+                }
               }
               return;
             }
@@ -747,7 +793,7 @@ const DepositoPanel = () => {
 
       // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros)
       if (!enModoNavegacionRegistros && !isInputFocused) {
-        const tabs = ['PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'EQUIPOS', 'TRANSPORTISTAS'];
+        const tabs = ['PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'ROLES', 'TRANSPORTISTAS'];
         const currentIndex = tabs.indexOf(filtroEstado);
 
         if (event.key === 'ArrowLeft' && currentIndex > 0) {
@@ -944,9 +990,9 @@ const DepositoPanel = () => {
                            target.isContentEditable;
       
       if (event.key === 'Enter' && !isInputFocused) {
-        if (filtroEstado === 'EQUIPOS' && !showGrupoModal) {
+        if (filtroEstado === 'ROLES' && !showUsuarioModal) {
           event.preventDefault();
-          setShowGrupoModal(true);
+          setShowUsuarioModal(true);
         }
       }
     };
@@ -967,12 +1013,27 @@ const DepositoPanel = () => {
     }
   }, [showGrupoModal]);
 
+  // Enfocar el primer campo cuando se abre el modal de usuarios
+  useEffect(() => {
+    if (showUsuarioModal && usernameRef.current) {
+      // Pequeño delay para asegurar que el modal esté completamente renderizado
+      setTimeout(() => {
+        usernameRef.current?.focus();
+      }, 100);
+    }
+  }, [showUsuarioModal]);
+
   // Cerrar modal con ESC
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape' && showGrupoModal) {
-        setShowGrupoModal(false);
-        setGrupoForm({ nombre: '' });
+      if (event.key === 'Escape') {
+        if (showGrupoModal) {
+          setShowGrupoModal(false);
+          setGrupoForm({ nombre: '' });
+        } else if (showUsuarioModal) {
+        setShowUsuarioModal(false);
+        setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
+        }
       }
     };
 
@@ -980,24 +1041,40 @@ const DepositoPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showGrupoModal]);
+  }, [showGrupoModal, showUsuarioModal]);
 
   // Función para cargar todos los pedidos para calcular notificaciones
   const cargarTodosLosPedidosParaNotificaciones = async () => {
+    // PLANILLERO y CONTROL no tienen acceso a obtenerPendientesSinOrden, solo cargar lo que pueden
+    if (user?.rol === 'PLANILLERO' || user?.rol === 'CONTROL') {
     try {
-      const [pendientesConOrden, enPreparacion, sinOrden] = await Promise.all([
-        pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado (los que aparecen en "Pendientes")
+        const [pendientesConOrden, enPreparacion] = await Promise.all([
+          pedidoService.obtenerConOrdenPrioridadCarga(),
         pedidoService.obtenerPorEstado('EN_PREPARACION'),
-        pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
-      ]);
+        ]);
       setTodosLosPedidos({
         PENDIENTE: pendientesConOrden.data || [],
         EN_PREPARACION: enPreparacion.data || [],
       });
-      // Actualizar cantidad de planillas sin orden para el indicador
-      setCantidadPlanillasSinOrden((sinOrden.data || []).length);
     } catch (error) {
       console.error('Error al cargar todos los pedidos:', error);
+      }
+    } else {
+      try {
+        const [pendientesConOrden, enPreparacion, sinOrden] = await Promise.all([
+          pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado (los que aparecen en "Pendientes")
+          pedidoService.obtenerPorEstado('EN_PREPARACION'),
+          pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
+        ]);
+        setTodosLosPedidos({
+          PENDIENTE: pendientesConOrden.data || [],
+          EN_PREPARACION: enPreparacion.data || [],
+        });
+        // Actualizar cantidad de planillas sin orden para el indicador
+        setCantidadPlanillasSinOrden((sinOrden.data || []).length);
+      } catch (error) {
+        console.error('Error al cargar todos los pedidos:', error);
+      }
     }
   };
 
@@ -1103,6 +1180,15 @@ const DepositoPanel = () => {
         // Para REALIZADO: usar el método normal
       const response = await pedidoService.obtenerPorEstado(filtroEstado);
         pedidosData = response.data || [];
+        // Debug: verificar si los datos tienen controladoPor y finalizadoPor
+        if (filtroEstado === 'REALIZADO' && pedidosData.length > 0) {
+          console.log('DepositoPanel - Pedidos REALIZADOS cargados:', pedidosData.map(p => ({
+            id: p.id,
+            numeroPlanilla: p.numeroPlanilla,
+            controladoPor: p.controladoPor,
+            finalizadoPor: p.finalizadoPor
+          })));
+        }
       
       // Ordenar pedidos por fecha de actualización (más recientes primero) para REALIZADOS
       // Para otros estados, ordenar por fecha de creación
@@ -1138,6 +1224,22 @@ const DepositoPanel = () => {
       console.error('Error al cargar equipos:', error);
       setGrupos([]);
       // No lanzamos error aquí porque equipos no es crítico
+    }
+  };
+
+  const cargarUsuariosRoles = async () => {
+    try {
+      // Cargar usuarios PLANILLERO y CONTROL
+      const [planillerosResponse, controlResponse] = await Promise.all([
+        usuarioService.obtenerPorRol('PLANILLERO'),
+        usuarioService.obtenerPorRol('CONTROL')
+      ]);
+      const planilleros = planillerosResponse.data || [];
+      const control = controlResponse.data || [];
+      setUsuariosRoles([...planilleros, ...control]);
+    } catch (error) {
+      console.error('Error al cargar usuarios de roles:', error);
+      setUsuariosRoles([]);
     }
   };
 
@@ -1280,9 +1382,9 @@ const DepositoPanel = () => {
               ...prev,
               PENDIENTE: pedidosConOrden,
             }));
-            // Si estamos en la pestaña de Pendientes, actualizar también la lista visible
-            if (filtroEstado === 'PENDIENTE') {
-              setPedidos(pedidosConOrden);
+              // Si estamos en la pestaña de Pendientes, actualizar también la lista visible
+              if (filtroEstado === 'PENDIENTE') {
+                setPedidos(pedidosConOrden);
             }
           })
           .catch(err => console.error('Error al actualizar pedidos pendientes:', err));
@@ -1297,6 +1399,28 @@ const DepositoPanel = () => {
                     (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') ? 1000 : 300;
       setTimeout(async () => {
         try {
+          // PLANILLERO y CONTROL no tienen acceso a obtenerPendientesSinOrden
+          if (user?.rol === 'PLANILLERO' || user?.rol === 'CONTROL') {
+            const [pendientesConOrden, enPreparacion] = await Promise.all([
+              pedidoService.obtenerConOrdenPrioridadCarga(),
+              pedidoService.obtenerPorEstado('EN_PREPARACION'),
+            ]);
+            // Para cambios de PENDIENTE a EN_PREPARACION, solo actualizar si el pedido está en EN_PREPARACION en el backend
+            if (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PREPARACION') {
+              const pedidoEnBackend = enPreparacion.data?.find(p => p.id === pedidoId);
+              if (pedidoEnBackend) {
+                setTodosLosPedidos({
+                  PENDIENTE: pendientesConOrden.data || [],
+                  EN_PREPARACION: enPreparacion.data || [],
+                });
+              }
+            } else {
+              setTodosLosPedidos({
+                PENDIENTE: pendientesConOrden.data || [],
+                EN_PREPARACION: enPreparacion.data || [],
+              });
+            }
+          } else {
           const [pendientesConOrden, enPreparacion, sinOrden] = await Promise.all([
             pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
             pedidoService.obtenerPorEstado('EN_PREPARACION'),
@@ -1348,6 +1472,7 @@ const DepositoPanel = () => {
             });
             setCantidadPlanillasSinOrden((sinOrden.data || []).length);
           }
+          }
         } catch (err) {
           console.error('Error al actualizar cache después de cambiar estado:', err);
         }
@@ -1363,9 +1488,9 @@ const DepositoPanel = () => {
       await grupoService.crear(grupoForm.nombre);
       setShowGrupoModal(false);
       setGrupoForm({ nombre: '' });
-      // Si estamos en la pestaña de Equipos, recargar todos los equipos
-      if (filtroEstado === 'EQUIPOS') {
-        await cargarGrupos();
+      // Si estamos en la pestaña de Equipos, recargar todos los equipos (mantener para compatibilidad)
+      if (filtroEstado === 'ROLES') {
+        await cargarUsuariosRoles();
       } else {
         // Si no, solo recargar equipos activos para los selectores
         const gruposActivos = await cargarGruposActivos();
@@ -1383,9 +1508,9 @@ const DepositoPanel = () => {
     }
     try {
       await grupoService.eliminar(grupoId);
-      // Solo recargar si estamos en la pestaña de Equipos
-      if (filtroEstado === 'EQUIPOS') {
-        await cargarGrupos();
+      // Solo recargar si estamos en la pestaña de Equipos (mantener para compatibilidad)
+      if (filtroEstado === 'ROLES') {
+        await cargarUsuariosRoles();
       } else {
         // Si no, solo recargar equipos activos para los selectores
         const gruposActivos = await cargarGruposActivos();
@@ -1405,9 +1530,9 @@ const DepositoPanel = () => {
     }
     try {
       await grupoService.actualizar(grupoId, { activo: true });
-      // Solo recargar si estamos en la pestaña de Equipos
-      if (filtroEstado === 'EQUIPOS') {
-        await cargarGrupos();
+      // Solo recargar si estamos en la pestaña de Equipos (mantener para compatibilidad)
+      if (filtroEstado === 'ROLES') {
+        await cargarUsuariosRoles();
       } else {
         // Si no, solo recargar equipos activos para los selectores
         const gruposActivos = await cargarGruposActivos();
@@ -1419,6 +1544,31 @@ const DepositoPanel = () => {
       const errorMessage = error.response?.data || error.message || 'Error al activar equipo';
       alert(errorMessage);
     }
+  };
+
+  const handleCrearUsuario = async (e) => {
+    e.preventDefault();
+    try {
+      const api = (await import('../config/axios')).default;
+      await api.post('/usuarios', usuarioForm);
+      setShowUsuarioModal(false);
+      setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
+      await cargarUsuariosRoles();
+      alert('Usuario creado exitosamente');
+    } catch (error) {
+      alert(error.response?.data || 'Error al crear usuario');
+    }
+  };
+
+  // Función para formatear el nombre del rol para mostrar
+  const formatearNombreRol = (rolNombre) => {
+    const nombresRoles = {
+      'ADMIN_PRINCIPAL': 'Administrador Principal',
+      'ADMIN_DEPOSITO': 'Administrador Depósito',
+      'PLANILLERO': 'Planillero',
+      'CONTROL': 'Control'
+    };
+    return nombresRoles[rolNombre] || rolNombre;
   };
 
   const getEstadoTexto = (pedido) => {
@@ -1710,26 +1860,43 @@ const DepositoPanel = () => {
               display: 'inline-block'
             }}
           />
-          Panel de Depósito
+          {user?.rol === 'PLANILLERO' ? 'Panel de Planillero' : user?.rol === 'CONTROL' ? 'Panel de Control' : 'Panel de Depósito'}
         </h1>
+        {/* Estructura mobile para header */}
+        <div className="header-row-mobile">
+          <h1 className="h1-mobile">
+            <img 
+              src="/logo-empresa.png" 
+              alt="Logo Empresa" 
+              style={{ 
+                height: '28px',
+                marginRight: '8px',
+                verticalAlign: 'middle',
+                display: 'inline-block'
+              }}
+            />
+            {user?.rol === 'PLANILLERO' ? 'Panel de Planillero' : user?.rol === 'CONTROL' ? 'Panel de Control' : 'Panel de Depósito'}
+          </h1>
+        </div>
         <div className="user-info">
           <span>
             <span style={{ marginRight: '8px', fontSize: '1.1rem', verticalAlign: 'middle' }}>👤</span>
             {user?.nombreCompleto || user?.username || 'Usuario'}
           </span>
-          <button 
-            onClick={() => setShowChat(!showChat)} 
-            className="btn-chat"
-            style={{ position: 'relative' }}
-          >
-            💬
-            {cantidadMensajesNoLeidos > 0 && (
-              <span 
-                style={{
-                  position: 'absolute',
-                  top: '-8px',
-                  right: '-8px',
-                  backgroundColor: '#F44336',
+          {user?.rol !== 'CONTROL' && user?.rol !== 'PLANILLERO' && (
+            <button 
+              onClick={() => setShowChat(!showChat)} 
+              className="btn-chat"
+              style={{ position: 'relative' }}
+            >
+              💬
+              {cantidadMensajesNoLeidos > 0 && (
+                <span 
+                  style={{
+                    position: 'absolute',
+                    top: '-8px',
+                    right: '-8px',
+                    backgroundColor: '#F44336',
                   color: 'white',
                   borderRadius: '50%',
                   width: '24px',
@@ -1745,8 +1912,12 @@ const DepositoPanel = () => {
                 {cantidadMensajesNoLeidos > 99 ? '99+' : cantidadMensajesNoLeidos}
               </span>
             )}
-          </button>
+            </button>
+          )}
           <button onClick={logout} className="btn-logout">
+            Salir
+          </button>
+          <button onClick={logout} className="btn-logout-mobile">
             Salir
           </button>
         </div>
@@ -1754,35 +1925,37 @@ const DepositoPanel = () => {
 
       <div className="filtros">
         <div className="filtros-buttons">
-          <button
-            className={filtroEstado === 'PRIORIDAD_CARGA' ? 'active' : ''}
-            onClick={() => setFiltroEstado('PRIORIDAD_CARGA')}
-            style={{ position: 'relative' }}
-          >
-            Prioridad de Carga
-            {cantidadPlanillasSinOrden > 0 && (
-              <span
-                style={{
-                  position: 'absolute',
-                  top: '-8px',
-                  right: '-8px',
-                  backgroundColor: '#F44336',
-                  color: 'white',
-                  borderRadius: '50%',
-                  width: '24px',
-                  height: '24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '12px',
-                  fontWeight: 'bold',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                }}
-              >
-                {cantidadPlanillasSinOrden}
-              </span>
-            )}
-          </button>
+            {user?.rol !== 'PLANILLERO' && user?.rol !== 'CONTROL' && (
+            <button
+              className={filtroEstado === 'PRIORIDAD_CARGA' ? 'active' : ''}
+              onClick={() => setFiltroEstado('PRIORIDAD_CARGA')}
+              style={{ position: 'relative' }}
+            >
+              Prioridad de Carga
+              {cantidadPlanillasSinOrden > 0 && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '-8px',
+                    right: '-8px',
+                    backgroundColor: '#F44336',
+                    color: 'white',
+                    borderRadius: '50%',
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                  }}
+                >
+                  {cantidadPlanillasSinOrden}
+                </span>
+              )}
+            </button>
+          )}
           <button
             className={filtroEstado === 'PENDIENTE' ? 'active' : ''}
             onClick={() => setFiltroEstado('PENDIENTE')}
@@ -1818,9 +1991,9 @@ const DepositoPanel = () => {
             style={{ position: 'relative' }}
           >
             En Preparación
-            {(() => {
-              const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => !p.etapaPreparacion).length;
-              return cantidad > 0 ? (
+              {(() => {
+                const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => !p.etapaPreparacion).length;
+                return cantidad > 0 ? (
               <span
                 style={{
                   position: 'absolute',
@@ -1839,49 +2012,52 @@ const DepositoPanel = () => {
                   boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                 }}
               >
-                  {cantidad}
+                    {cantidad}
               </span>
-              ) : null;
-            })()}
+                ) : null;
+              })()}
+            </button>
+            {user?.rol !== 'PLANILLERO' && (
+            <button
+              className={filtroEstado === 'CONTROL' ? 'active' : ''}
+              onClick={() => setFiltroEstado('CONTROL')}
+              style={{ position: 'relative' }}
+            >
+              Control
+              {(() => {
+                const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => p.etapaPreparacion === 'CONTROL' && !p.controlado).length;
+                return cantidad > 0 ? (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '-8px',
+                      right: '-8px',
+                      backgroundColor: '#F44336',
+                      color: 'white',
+                      borderRadius: '50%',
+                      width: '24px',
+                      height: '24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                    }}
+                  >
+                    {cantidad}
+                  </span>
+                ) : null;
+              })()}
           </button>
-          <button
-            className={filtroEstado === 'CONTROL' ? 'active' : ''}
-            onClick={() => setFiltroEstado('CONTROL')}
-            style={{ position: 'relative' }}
-          >
-            Control
-            {(() => {
-              const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => p.etapaPreparacion === 'CONTROL' && !p.controlado).length;
-              return cantidad > 0 ? (
-                <span
-                  style={{
-                    position: 'absolute',
-                    top: '-8px',
-                    right: '-8px',
-                    backgroundColor: '#F44336',
-                    color: 'white',
-                    borderRadius: '50%',
-                    width: '24px',
-                    height: '24px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                  }}
-                >
-                  {cantidad}
-                </span>
-              ) : null;
-            })()}
-          </button>
-          <button
-            className={filtroEstado === 'PENDIENTE_CARGA' ? 'active' : ''}
-            onClick={() => setFiltroEstado('PENDIENTE_CARGA')}
-            style={{ position: 'relative' }}
-          >
-            Pendiente de Carga
+          )}
+            {user?.rol !== 'PLANILLERO' && (
+            <button
+              className={filtroEstado === 'PENDIENTE_CARGA' ? 'active' : ''}
+              onClick={() => setFiltroEstado('PENDIENTE_CARGA')}
+              style={{ position: 'relative' }}
+            >
+              Pendiente de Carga
             {(() => {
               const cantidad = (todosLosPedidos.EN_PREPARACION || []).filter(p => p.etapaPreparacion === 'PENDIENTE_CARGA').length;
               return cantidad > 0 ? (
@@ -1907,18 +2083,21 @@ const DepositoPanel = () => {
                 </span>
               ) : null;
             })()}
-          </button>
+            </button>
+          )}
           <button
             className={filtroEstado === 'REALIZADO' ? 'active' : ''}
             onClick={() => setFiltroEstado('REALIZADO')}
           >
             Realizados
           </button>
+          {user?.rol !== 'PLANILLERO' && user?.rol !== 'CONTROL' && (
+            <>
           <button
-            className={filtroEstado === 'EQUIPOS' ? 'active' : ''}
-            onClick={() => setFiltroEstado('EQUIPOS')}
+            className={filtroEstado === 'ROLES' ? 'active' : ''}
+            onClick={() => setFiltroEstado('ROLES')}
           >
-            Equipos
+            Roles
           </button>
           <button
             className={filtroEstado === 'TRANSPORTISTAS' ? 'active' : ''}
@@ -1926,12 +2105,14 @@ const DepositoPanel = () => {
           >
             Transportes
           </button>
+            </>
+          )}
         </div>
       </div>
 
       <div className="content-section">
-        {/* Tab de Prioridad de Carga */}
-        {filtroEstado === 'PRIORIDAD_CARGA' && (
+        {/* Tab de Prioridad de Carga - Solo para ADMIN_DEPOSITO */}
+        {filtroEstado === 'PRIORIDAD_CARGA' && user?.rol !== 'PLANILLERO' && (
           <GestionPrioridadCarga 
             onContadorCambio={(nuevaCantidad) => {
               // Actualizar el contador inmediatamente cuando cambia desde GestionPrioridadCarga
@@ -1956,8 +2137,8 @@ const DepositoPanel = () => {
           />
         )}
         
-        {/* Tab de Equipos */}
-        {filtroEstado === 'EQUIPOS' && (
+        {/* Tab de Roles */}
+        {filtroEstado === 'ROLES' && (
           <div style={{
             backgroundColor: 'white',
             padding: '20px',
@@ -1970,9 +2151,9 @@ const DepositoPanel = () => {
               alignItems: 'center',
               marginBottom: '20px'
             }}>
-              <h2 style={{ margin: 0, color: '#333' }}>Equipos</h2>
+              <h2 style={{ margin: 0, color: '#333' }}>Roles</h2>
               <button
-                onClick={() => setShowGrupoModal(true)}
+                onClick={() => setShowUsuarioModal(true)}
                 style={{
                   padding: '10px 20px',
                   backgroundColor: '#2196F3',
@@ -1987,12 +2168,12 @@ const DepositoPanel = () => {
                 onMouseEnter={(e) => e.target.style.backgroundColor = '#1976D2'}
                 onMouseLeave={(e) => e.target.style.backgroundColor = '#2196F3'}
               >
-                + Nuevo Equipo
+                + Nuevo Usuario
               </button>
             </div>
-            {grupos.length === 0 ? (
+            {usuariosRoles.length === 0 ? (
               <p style={{ textAlign: 'center', color: '#666', padding: '40px' }}>
-                No hay equipos registrados
+                No hay usuarios asignados
               </p>
             ) : (
               <table style={{ 
@@ -2011,7 +2192,7 @@ const DepositoPanel = () => {
                       fontWeight: 'bold',
                       color: '#333'
                     }}>
-                      ID
+                      Usuario
                     </th>
                     <th style={{ 
                       padding: '12px', 
@@ -2020,6 +2201,14 @@ const DepositoPanel = () => {
                       color: '#333'
                     }}>
                       Nombre
+                    </th>
+                    <th style={{ 
+                      padding: '12px', 
+                      textAlign: 'left',
+                      fontWeight: 'bold',
+                      color: '#333'
+                    }}>
+                      Rol
                     </th>
                     <th style={{ 
                       padding: '12px', 
@@ -2040,9 +2229,9 @@ const DepositoPanel = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {grupos.map((grupo) => (
+                  {usuariosRoles.map((usuario) => (
                     <tr 
-                      key={grupo.id}
+                      key={usuario.id}
                       style={{
                         borderBottom: '1px solid #eee',
                         transition: 'background-color 0.2s'
@@ -2051,10 +2240,13 @@ const DepositoPanel = () => {
                       onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                     >
                       <td style={{ padding: '12px', color: '#333' }}>
-                        {grupo.id}
+                        {usuario.username}
                       </td>
                       <td style={{ padding: '12px', color: '#333', fontWeight: '500' }}>
-                        {grupo.nombre}
+                        {usuario.nombreCompleto}
+                      </td>
+                      <td style={{ padding: '12px', color: '#333' }}>
+                        {formatearNombreRol(usuario.rol?.nombre)}
                       </td>
                       <td style={{ padding: '12px' }}>
                         <span style={{
@@ -2062,16 +2254,29 @@ const DepositoPanel = () => {
                           borderRadius: '12px',
                           fontSize: '0.85em',
                           fontWeight: 'bold',
-                          backgroundColor: grupo.activo !== false ? '#E8F5E9' : '#FFEBEE',
-                          color: grupo.activo !== false ? '#2E7D32' : '#C62828'
+                          backgroundColor: usuario.activo ? '#E8F5E9' : '#FFEBEE',
+                          color: usuario.activo ? '#2E7D32' : '#C62828'
                         }}>
-                          {grupo.activo !== false ? 'Activo' : 'Inactivo'}
+                          {usuario.activo ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
                       <td style={{ padding: '12px' }}>
-                        {grupo.activo !== false ? (
+                          {usuario.activo ? (
                           <button
-                            onClick={() => handleEliminarGrupo(grupo.id)}
+                            onClick={async () => {
+                              if (!window.confirm('¿Estás seguro de que deseas desactivar este usuario?\n\nEl usuario no podrá iniciar sesión, pero se mantendrá en el sistema.')) {
+                                return;
+                              }
+                              try {
+                                await usuarioService.actualizarEstado(usuario.id, false);
+                                await cargarUsuariosRoles();
+                                alert('Usuario desactivado exitosamente');
+                              } catch (error) {
+                                console.error('Error al desactivar usuario:', error);
+                                const errorMessage = error.response?.data || error.message || 'Error al desactivar usuario';
+                                alert(errorMessage);
+                              }
+                            }}
                             style={{
                               padding: '6px 12px',
                               backgroundColor: '#F44336',
@@ -2090,10 +2295,23 @@ const DepositoPanel = () => {
                           </button>
                         ) : (
                           <button
-                            onClick={() => handleActivarGrupo(grupo.id)}
+                            onClick={async () => {
+                              if (!window.confirm('¿Estás seguro de que deseas activar este usuario?\n\nEl usuario podrá iniciar sesión nuevamente.')) {
+                                return;
+                              }
+                              try {
+                                await usuarioService.actualizarEstado(usuario.id, true);
+                                await cargarUsuariosRoles();
+                                alert('Usuario activado exitosamente');
+                              } catch (error) {
+                                console.error('Error al activar usuario:', error);
+                                const errorMessage = error.response?.data || error.message || 'Error al activar usuario';
+                                alert(errorMessage);
+                              }
+                            }}
                             style={{
                               padding: '6px 12px',
-                              backgroundColor: '#0f766e',
+                              backgroundColor: '#1e40af',
                               color: 'white',
                               border: 'none',
                               borderRadius: '4px',
@@ -2102,8 +2320,8 @@ const DepositoPanel = () => {
                               fontWeight: 'bold',
                               transition: 'background-color 0.2s',
                             }}
-                            onMouseEnter={(e) => e.target.style.backgroundColor = '#0d9488'}
-                            onMouseLeave={(e) => e.target.style.backgroundColor = '#0f766e'}
+                            onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a8a'}
+                            onMouseLeave={(e) => e.target.style.backgroundColor = '#1e40af'}
                           >
                             Activar
                           </button>
@@ -2195,7 +2413,7 @@ const DepositoPanel = () => {
 
         {/* Buscador para sección REALIZADO */}
         {filtroEstado === 'REALIZADO' && (
-          <div style={{
+          <div className="realizados-header-container" style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -2207,7 +2425,7 @@ const DepositoPanel = () => {
             borderRadius: '12px',
             boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
           }}>
-            <div style={{
+            <div className="realizados-title-container" style={{
               display: 'flex',
               alignItems: 'center',
               gap: '12px'
@@ -2223,7 +2441,7 @@ const DepositoPanel = () => {
                 Planillas Realizadas
               </h2>
             </div>
-            <div style={{
+            <div className="search-container" style={{
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
@@ -2586,7 +2804,8 @@ const DepositoPanel = () => {
                                   <div style={{ 
                                     fontSize: '0.9rem', 
                                     color: '#F57C00',
-                                    fontWeight: '500'
+                                    fontWeight: '500',
+                                    marginBottom: '4px'
                                   }}>
                                     {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
                                       year: 'numeric',
@@ -2597,6 +2816,18 @@ const DepositoPanel = () => {
                                       hour12: false,
                                     })}
                                   </div>
+                                  {pedido.controladoPor && (
+                                    <div style={{ 
+                                      fontSize: '0.85rem', 
+                                      color: '#E65100',
+                                      fontWeight: '500',
+                                      marginTop: '4px',
+                                      paddingTop: '4px',
+                                      borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                                    }}>
+                                      <strong>Controlado por:</strong> {pedido.controladoPor}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                               <div style={{
@@ -2617,7 +2848,8 @@ const DepositoPanel = () => {
                                 <div style={{ 
                                   fontSize: '0.9rem', 
                                   color: '#15803d',
-                                  fontWeight: '500'
+                                  fontWeight: '500',
+                                  marginBottom: '4px'
                                 }}>
                                 {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                                   year: 'numeric',
@@ -2628,6 +2860,18 @@ const DepositoPanel = () => {
                                   hour12: false,
                                 })}
                                 </div>
+                                {pedido.finalizadoPor && (
+                                  <div style={{ 
+                                    fontSize: '0.85rem', 
+                                    color: '#15803d',
+                                    fontWeight: '500',
+                                    marginTop: '4px',
+                                    paddingTop: '4px',
+                                    borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                                  }}>
+                                    <strong>Finalizado por:</strong> {pedido.finalizadoPor}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}
@@ -2676,11 +2920,11 @@ const DepositoPanel = () => {
           </div>
         )}
 
-        {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'EQUIPOS' && filtroEstado !== 'REALIZADO' && filtroEstado !== 'PRIORIDAD_CARGA' && (
+        {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'ROLES' && filtroEstado !== 'REALIZADO' && filtroEstado !== 'PRIORIDAD_CARGA' && (
           <div>
             {/* Buscador para PENDIENTE */}
             {filtroEstado === 'PENDIENTE' && (
-              <div style={{
+              <div className="pendientes-header-container" style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
@@ -2692,7 +2936,7 @@ const DepositoPanel = () => {
                 borderRadius: '12px',
                 boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)'
               }}>
-                <div style={{
+                <div className="pendientes-title-wrapper" style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '12px'
@@ -2708,7 +2952,7 @@ const DepositoPanel = () => {
                     Planillas Pendientes
                   </h2>
                 </div>
-                <div style={{
+                <div className="search-container" style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
@@ -2971,11 +3215,61 @@ const DepositoPanel = () => {
                 
                 {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
                   <div style={{
+                    display: 'flex',
+                    gap: '12px',
+                    marginTop: '8px'
+                  }}>
+                    {pedido.fechaPendienteCarga && (
+                      <div style={{
+                        flex: 1,
+                        padding: '12px',
+                        background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                        borderRadius: '8px',
+                        border: '1px solid #ffb74d'
+                      }}>
+                        <div style={{ 
+                          fontSize: '0.85rem', 
+                          fontWeight: '600', 
+                          color: '#E65100',
+                          marginBottom: '4px'
+                        }}>
+                          ✅ Controlado
+                        </div>
+                        <div style={{ 
+                          fontSize: '0.9rem', 
+                          color: '#F57C00',
+                          fontWeight: '500',
+                          marginBottom: '4px'
+                        }}>
+                          {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                          })}
+                        </div>
+                        {pedido.controladoPor && (
+                          <div style={{ 
+                            fontSize: '0.85rem', 
+                            color: '#E65100',
+                            fontWeight: '500',
+                            marginTop: '4px',
+                            paddingTop: '4px',
+                            borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                          }}>
+                            <strong>Controlado por:</strong> {pedido.controladoPor}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div style={{
+                      flex: 1,
                     padding: '12px',
                     background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
                     borderRadius: '8px',
-                    border: '1px solid #86efac',
-                    marginTop: '8px'
+                      border: '1px solid #86efac'
                   }}>
                     <div style={{ 
                       fontSize: '0.85rem', 
@@ -2988,7 +3282,8 @@ const DepositoPanel = () => {
                     <div style={{ 
                       fontSize: '0.9rem', 
                       color: '#15803d',
-                      fontWeight: '500'
+                      fontWeight: '500',
+                        marginBottom: '4px'
                     }}>
                       {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                         year: 'numeric',
@@ -2999,13 +3294,26 @@ const DepositoPanel = () => {
                         hour12: false,
                       })}
                     </div>
+                      {pedido.finalizadoPor && (
+                    <div style={{ 
+                      fontSize: '0.85rem', 
+                          color: '#15803d',
+                      fontWeight: '500',
+                      marginTop: '4px',
+                      paddingTop: '4px',
+                          borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                        }}>
+                          <strong>Finalizado por:</strong> {pedido.finalizadoPor}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
               {pedido.estado !== 'REALIZADO' && (
                 <div className="pedido-actions">
-                  {/* Asignar Equipo disponible en todas las etapas hasta finalizar, EXCEPTO en PENDIENTE */}
-                  {filtroEstado !== 'PENDIENTE' && (
+                  {/* Asignar Equipo disponible en todas las etapas hasta finalizar, EXCEPTO en PENDIENTE, EN_PREPARACION, CONTROL, PENDIENTE_CARGA y para rol CONTROL */}
+                  {filtroEstado !== 'PENDIENTE' && filtroEstado !== 'EN_PREPARACION' && filtroEstado !== 'CONTROL' && filtroEstado !== 'PENDIENTE_CARGA' && user?.rol !== 'CONTROL' && (
                     <div className="action-group" style={{ position: 'relative' }}>
                       <label>Asignar Equipo:</label>
                       <select
@@ -3093,13 +3401,17 @@ const DepositoPanel = () => {
                     </div>
                   )}
                   <div className="action-group">
-                    {pedido.estado === 'PENDIENTE' && (
+                    {pedido.estado === 'PENDIENTE' && user?.rol === 'PLANILLERO' && (
                       <button
                         ref={(el) => {
                           if (el) prepararButtonRefs.current[pedido.id] = el;
                         }}
                         className="btn-primary"
-                        onClick={() => handleCambiarEstado(pedido.id, 'EN_PREPARACION')}
+                        onClick={() => {
+                          if (window.confirm(`¿Estás seguro de que deseas preparar la planilla ${pedido.numeroPlanilla}?\n\nLa planilla pasará a estado "En Preparación".`)) {
+                            handleCambiarEstado(pedido.id, 'EN_PREPARACION');
+                          }
+                        }}
                         style={{
                           background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)',
                           color: 'white',
@@ -3131,16 +3443,20 @@ const DepositoPanel = () => {
                         Preparar
                       </button>
                     )}
-                    {/* Botones para EN_PREPARACION (sin etapaPreparacion) */}
-                    {filtroEstado === 'EN_PREPARACION' && pedido.estado === 'EN_PREPARACION' && !pedido.etapaPreparacion && (
-                      <div style={{ display: 'flex', gap: '12px', width: '100%' }}>
+                    {/* Botones para EN_PREPARACION (sin etapaPreparacion) - Solo para PLANILLERO */}
+                    {filtroEstado === 'EN_PREPARACION' && pedido.estado === 'EN_PREPARACION' && !pedido.etapaPreparacion && user?.rol === 'PLANILLERO' && (
+                      <div className="mobile-button-group" style={{ display: 'flex', gap: '12px', width: '100%' }}>
                         <button
                           ref={(el) => {
                             if (el) volverPendienteButtonRefs.current[pedido.id] = el;
                           }}
                           data-pedido-id={pedido.id}
                           className="btn-secondary"
-                          onClick={() => handleCambiarEstado(pedido.id, 'PENDIENTE')}
+                          onClick={() => {
+                            if (window.confirm(`¿Estás seguro de que deseas volver la planilla ${pedido.numeroPlanilla} a estado "Pendiente"?\n\nLa planilla volverá a la lista de pendientes.`)) {
+                              handleCambiarEstado(pedido.id, 'PENDIENTE');
+                            }
+                          }}
                           style={{
                             flex: 1,
                             background: 'linear-gradient(135deg, #6B7280 0%, #4B5563 100%)',
@@ -3182,7 +3498,11 @@ const DepositoPanel = () => {
                           }}
                           data-pedido-id={pedido.id}
                           className="btn-success"
-                          onClick={() => handleAvanzarEtapa(pedido.id)}
+                          onClick={() => {
+                            if (window.confirm(`¿Estás seguro de que deseas finalizar la preparación de la planilla ${pedido.numeroPlanilla}?\n\nLa planilla pasará a la etapa de "Control".`)) {
+                              handleAvanzarEtapa(pedido.id);
+                            }
+                          }}
                           style={{
                             flex: 1,
                             background: 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)',
@@ -3220,15 +3540,19 @@ const DepositoPanel = () => {
                         </button>
                       </div>
                     )}
-                    {/* Botones para CONTROL (solo mostrar si no está controlado) */}
-                    {filtroEstado === 'CONTROL' && pedido.estado === 'EN_PREPARACION' && pedido.etapaPreparacion === 'CONTROL' && !pedido.controlado && (
+                    {/* Botones para CONTROL (solo mostrar si no está controlado) - Solo para CONTROL */}
+                    {filtroEstado === 'CONTROL' && pedido.estado === 'EN_PREPARACION' && pedido.etapaPreparacion === 'CONTROL' && !pedido.controlado && user?.rol === 'CONTROL' && (
                       <button
                         ref={(el) => {
                           if (el) finalizarButtonRefs.current[pedido.id] = el;
                         }}
                         data-pedido-id={pedido.id}
                         className="btn-success"
-                        onClick={() => handleAvanzarEtapa(pedido.id)}
+                        onClick={() => {
+                          if (window.confirm(`¿Estás seguro de que deseas controlar la planilla ${pedido.numeroPlanilla}?\n\nLa planilla pasará a "Pendiente de Carga".`)) {
+                            handleAvanzarEtapa(pedido.id);
+                          }
+                        }}
                         style={{
                           width: '100%',
                           background: 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)',
@@ -3257,18 +3581,22 @@ const DepositoPanel = () => {
                         }}
                       >
                         <span style={{ marginRight: '6px' }}>✓</span>
-                        Controlado
+                        Controlar
                       </button>
                     )}
-                    {/* Botones para PENDIENTE_CARGA */}
-                    {filtroEstado === 'PENDIENTE_CARGA' && pedido.estado === 'EN_PREPARACION' && pedido.etapaPreparacion === 'PENDIENTE_CARGA' && (
+                    {/* Botones para PENDIENTE_CARGA - Solo para CONTROL */}
+                    {filtroEstado === 'PENDIENTE_CARGA' && pedido.estado === 'EN_PREPARACION' && pedido.etapaPreparacion === 'PENDIENTE_CARGA' && user?.rol === 'CONTROL' && (
                       <button
                         ref={(el) => {
                           if (el) finalizarButtonRefs.current[pedido.id] = el;
                         }}
                         data-pedido-id={pedido.id}
                         className="btn-success"
-                        onClick={() => handleAvanzarEtapa(pedido.id)}
+                        onClick={() => {
+                          if (window.confirm(`¿Estás seguro de que deseas finalizar la planilla ${pedido.numeroPlanilla}?\n\nLa planilla pasará a estado "Realizado" y se completará el proceso.`)) {
+                            handleAvanzarEtapa(pedido.id);
+                          }
+                        }}
                         style={{
                           width: '100%',
                           background: 'linear-gradient(135deg, #4CAF50 0%, #388E3C 100%)',
@@ -3455,6 +3783,112 @@ const DepositoPanel = () => {
         </div>
       )}
 
+      {showUsuarioModal && (
+        <div className="modal-overlay" onClick={() => {
+          setShowUsuarioModal(false);
+          setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
+        }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Nuevo Usuario</h3>
+            <form onSubmit={handleCrearUsuario}>
+              <div className="form-group">
+                <label>Usuario</label>
+                <input
+                  ref={usernameRef}
+                  type="text"
+                  value={usuarioForm.username}
+                  onChange={(e) =>
+                    setUsuarioForm({ ...usuarioForm, username: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      nombreCompletoRef.current?.focus();
+                    }
+                  }}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Nombre Completo</label>
+                <input
+                  ref={nombreCompletoRef}
+                  type="text"
+                  value={usuarioForm.nombreCompleto}
+                  onChange={(e) =>
+                    setUsuarioForm({ ...usuarioForm, nombreCompleto: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      passwordRef.current?.focus();
+                    }
+                  }}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Contraseña</label>
+                <input
+                  ref={passwordRef}
+                  type="password"
+                  value={usuarioForm.password}
+                  onChange={(e) =>
+                    setUsuarioForm({ ...usuarioForm, password: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      rolRef.current?.focus();
+                    }
+                  }}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Rol</label>
+                <select
+                  ref={rolRef}
+                  value={usuarioForm.rol}
+                  onChange={(e) =>
+                    setUsuarioForm({ ...usuarioForm, rol: e.target.value })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      // Buscar el botón de submit y hacer click
+                      const submitButton = e.currentTarget.closest('form')?.querySelector('button[type="submit"]');
+                      if (submitButton) {
+                        submitButton.click();
+                      }
+                    }
+                  }}
+                  required
+                >
+                  <option value="PLANILLERO">Planillero</option>
+                  <option value="CONTROL">Control</option>
+                </select>
+              </div>
+              <div className="modal-actions">
+                <button type="submit" className="btn-primary">
+                  Crear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUsuarioModal(false);
+                    setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
+                  }}
+                  className="btn-secondary"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Resumen */}
       {showResumenModal && (() => {
         // Agrupar pedidos por vuelta
@@ -3548,8 +3982,8 @@ const DepositoPanel = () => {
         </div>
         );
       })()}
-      {/* Componente Chat */}
-      {showChat && (
+      {/* Componente Chat - Solo para ADMIN_DEPOSITO */}
+      {showChat && user?.rol !== 'CONTROL' && user?.rol !== 'PLANILLERO' && (
         <Chat 
           onClose={() => {
             setShowChat(false);

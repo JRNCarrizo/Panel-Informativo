@@ -20,8 +20,10 @@ public class Rol {
     private TipoRol nombre;
 
     public enum TipoRol {
-        ADMIN,
-        DEPOSITO
+        ADMIN_PRINCIPAL,    // Panel Admin - Crea y elimina planillas
+        ADMIN_DEPOSITO,     // Panel Depósito - Gestiona Prioridad de Carga
+        PLANILLERO,         // Panel Depósito - Selecciona y prepara planillas
+        CONTROL             // Panel Depósito - Controla y finaliza planillas
     }
 }
 

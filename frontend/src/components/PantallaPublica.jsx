@@ -233,7 +233,7 @@ const PantallaPublica = () => {
           </div>
           
           <div className="pantalla-titulo-container">
-            <h1 style={{ margin: 0, marginBottom: '8px' }}>PANEL CENTRAL</h1>
+            <h1 style={{ margin: 0, marginBottom: '8px' }}>ORDEN DE CARGAS</h1>
             <div className="fecha-hora">
               {horaActual.toLocaleString('es-AR', {
                 weekday: 'long',

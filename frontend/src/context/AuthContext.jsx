@@ -18,9 +18,25 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     let refreshInterval = null;
+    let isRefreshing = false; // Bandera para prevenir múltiples refreshes simultáneos
+    let refreshFailureCount = 0; // Contador de fallos consecutivos
+    let isCleanedUp = false; // Bandera para prevenir operaciones después de cleanup
+
+    // Función para limpiar el intervalo
+    const cleanupRefreshInterval = () => {
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
+    };
 
     // Función para renovar el token automáticamente (usar axios directamente para evitar interceptor)
     const refreshTokenIfNeeded = async () => {
+      // Prevenir múltiples llamadas simultáneas o si ya se hizo cleanup
+      if (isRefreshing || isCleanedUp) {
+        return;
+      }
+
       const token = localStorage.getItem('token');
       const userDataStr = localStorage.getItem('user');
       if (!token || !userDataStr) {
@@ -41,6 +57,7 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
+      isRefreshing = true;
       try {
         // Detectar la IP del backend automáticamente
         const hostname = window.location.hostname;
@@ -53,6 +70,9 @@ export const AuthProvider = ({ children }) => {
           headers: { Authorization: `Bearer ${token}` }
         });
         
+        // Resetear contador de fallos si tuvo éxito
+        refreshFailureCount = 0;
+        
         const { token: newToken, ...userData } = response.data;
         
         // Validar que el usuario sigue siendo el mismo antes de actualizar
@@ -64,6 +84,7 @@ export const AuthProvider = ({ children }) => {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           setUser(null);
+          isRefreshing = false;
           return;
         }
         
@@ -74,17 +95,49 @@ export const AuthProvider = ({ children }) => {
           console.error('Usuario actual completo:', currentUser);
           console.error('Usuario nuevo completo:', userData);
           // NO actualizar si el rol cambió - esto previene el cambio de panel
+          isRefreshing = false;
           return;
         }
         
-        // Solo actualizar si todo está correcto
-        localStorage.setItem('token', newToken);
-        localStorage.setItem('user', JSON.stringify(userData));
-        setUser(userData);
+        // Solo actualizar si todo está correcto y los datos realmente cambiaron
+        const userDataStr = JSON.stringify(userData);
+        const currentUserStr = JSON.stringify(currentUser);
+        
+        // Solo actualizar si los datos realmente cambiaron (evitar re-renders innecesarios)
+        if (userDataStr !== currentUserStr) {
+          localStorage.setItem('token', newToken);
+          localStorage.setItem('user', userDataStr);
+          setUser(userData);
+        } else {
+          // Solo actualizar el token sin cambiar el estado del usuario
+          localStorage.setItem('token', newToken);
+        }
       } catch (error) {
-        // Si falla la renovación silenciosamente, no hacer nada
-        // El interceptor de axios manejará el error cuando se haga una petición
+        refreshFailureCount++;
+        
+        // Si el error es 400 (Bad Request), probablemente el token es inválido
+        // Limpiar y detener los intentos para evitar loops infinitos
+        if (error.response?.status === 400 || refreshFailureCount >= 3) {
+          console.error('Error al renovar el token: el token parece ser inválido. Limpiando sesión.');
+          console.error('Detalles del error:', error.response?.data || error.message);
+          
+          // Marcar como cleanup para evitar más intentos
+          isCleanedUp = true;
+          
+          // Limpiar sesión y detener el intervalo
+          cleanupRefreshInterval();
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setUser(null);
+          
+          isRefreshing = false;
+          return;
+        }
+        
+        // Para otros errores, solo loguear silenciosamente
         console.warn('No se pudo renovar el token automáticamente:', error.message);
+      } finally {
+        isRefreshing = false;
       }
     };
 
@@ -97,32 +150,44 @@ export const AuthProvider = ({ children }) => {
         if (token && userData) {
           try {
             const parsedUser = JSON.parse(userData);
-            // Verificar que tenga los campos mínimos
-            if (parsedUser && parsedUser.username && parsedUser.rol) {
+            // Verificar que tenga los campos mínimos y que el rol sea válido
+            const rolesValidos = ['ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL'];
+            if (parsedUser && parsedUser.username && parsedUser.rol && rolesValidos.includes(parsedUser.rol)) {
               // Establecer usuario primero (sin esperar)
               setUser(parsedUser);
               
-              // Configurar renovación automática cada hora (más frecuente para evitar expiración)
-              refreshInterval = setInterval(() => {
-                refreshTokenIfNeeded();
-              }, 60 * 60 * 1000); // Cada hora
-              
               // Intentar renovar el token una vez al cargar (sin bloquear)
               // Esperar un poco para que la app esté completamente cargada
+              // Solo intentar si el token existe y parece válido
               setTimeout(() => {
-                refreshTokenIfNeeded().catch(err => {
-                  console.warn('Error al renovar token inicial:', err);
-                });
-              }, 1000);
+                const currentToken = localStorage.getItem('token');
+                if (currentToken) {
+                  refreshTokenIfNeeded().catch(err => {
+                    // Si falla con 400, el error ya fue manejado dentro de refreshTokenIfNeeded
+                    if (err.response?.status !== 400) {
+                      console.warn('Error al renovar token inicial:', err);
+                    }
+                  });
+                }
+              }, 3000); // Aumentar el delay inicial para evitar conflictos
               
-              // Renovar periódicamente cada 10 minutos para mantener el token siempre fresco
+              // Renovar periódicamente cada 15 minutos para mantener el token fresco
               // Esto asegura que la sesión nunca expire mientras uses la aplicación
-              const frequentRefreshInterval = setInterval(() => {
-                refreshTokenIfNeeded().catch(err => {
-                  // Silencioso, solo para mantener el token fresco
-                  // Si falla, el interceptor de axios se encargará de renovarlo cuando sea necesario
-                });
-              }, 10 * 60 * 1000); // Cada 10 minutos - renovación automática transparente
+              // Solo un intervalo para evitar múltiples llamadas simultáneas
+              refreshInterval = setInterval(() => {
+                const currentToken = localStorage.getItem('token');
+                const currentUser = localStorage.getItem('user');
+                // Solo intentar refresh si hay token y usuario válidos
+                if (currentToken && currentUser) {
+                  refreshTokenIfNeeded().catch(err => {
+                    // Silencioso, solo para mantener el token fresco
+                    // Si falla, el interceptor de axios se encargará de renovarlo cuando sea necesario
+                  });
+                } else {
+                  // Si no hay token/usuario, limpiar el intervalo
+                  cleanupRefreshInterval();
+                }
+              }, 15 * 60 * 1000); // Cada 15 minutos - renovación automática transparente
 
               // Escuchar eventos de renovación de token desde el interceptor
               const handleTokenRefreshed = (event) => {
@@ -145,20 +210,26 @@ export const AuthProvider = ({ children }) => {
                   return;
                 }
                 
-                // Solo actualizar si las validaciones pasan
-                setUser(newUserData);
+                // Solo actualizar si los datos realmente cambiaron (evitar re-renders innecesarios)
+                const newUserDataStr = JSON.stringify(newUserData);
+                const currentUserStr = JSON.stringify(currentUser);
+                if (newUserDataStr !== currentUserStr) {
+                  setUser(newUserData);
+                }
               };
               window.addEventListener('tokenRefreshed', handleTokenRefreshed);
               
               return () => {
-                if (refreshInterval) clearInterval(refreshInterval);
-                if (frequentRefreshInterval) clearInterval(frequentRefreshInterval);
+                isCleanedUp = true;
+                cleanupRefreshInterval();
                 window.removeEventListener('tokenRefreshed', handleTokenRefreshed);
               };
             } else {
-              // Datos inválidos, limpiar
+              // Datos inválidos o rol inválido (probablemente de la versión anterior), limpiar
+              console.warn('Datos de usuario inválidos o rol obsoleto. Limpiando sesión.');
               localStorage.removeItem('token');
               localStorage.removeItem('user');
+              setUser(null);
             }
           } catch (error) {
             // Error al parsear, limpiar datos corruptos
@@ -234,8 +305,14 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
-  const isAdmin = () => user?.rol === 'ADMIN';
-  const isDeposito = () => user?.rol === 'DEPOSITO';
+  const isAdminPrincipal = () => user?.rol === 'ADMIN_PRINCIPAL';
+  const isAdminDeposito = () => user?.rol === 'ADMIN_DEPOSITO';
+  const isPlanillero = () => user?.rol === 'PLANILLERO';
+  const isControl = () => user?.rol === 'CONTROL';
+  
+  // Funciones de compatibilidad (para verificar si es cualquier tipo de admin o depósito)
+  const isAdmin = () => user?.rol === 'ADMIN_PRINCIPAL';
+  const isDeposito = () => ['ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL'].includes(user?.rol);
 
   return (
     <AuthContext.Provider
@@ -248,6 +325,10 @@ export const AuthProvider = ({ children }) => {
         logout,
         isAdmin,
         isDeposito,
+        isAdminPrincipal,
+        isAdminDeposito,
+        isPlanillero,
+        isControl,
       }}
     >
       {children}

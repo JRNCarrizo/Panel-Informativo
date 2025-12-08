@@ -35,10 +35,10 @@ public class UsuarioService implements UserDetailsService {
             throw new IllegalStateException("Ya existe un usuario en el sistema");
         }
 
-        Rol rolAdmin = rolRepository.findByNombre(Rol.TipoRol.ADMIN)
+        Rol rolAdmin = rolRepository.findByNombre(Rol.TipoRol.ADMIN_PRINCIPAL)
                 .orElseGet(() -> {
                     Rol nuevoRol = new Rol();
-                    nuevoRol.setNombre(Rol.TipoRol.ADMIN);
+                    nuevoRol.setNombre(Rol.TipoRol.ADMIN_PRINCIPAL);
                     return rolRepository.save(nuevoRol);
                 });
 
@@ -52,16 +52,19 @@ public class UsuarioService implements UserDetailsService {
         return usuarioRepository.save(admin);
     }
 
+    // Método deprecado - usar crearUsuarioConRol en su lugar
     @Transactional
+    @Deprecated
     public Usuario crearUsuario(String username, String password, String nombreCompleto) {
         if (usuarioRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("El username ya existe");
         }
 
-        Rol rolDeposito = rolRepository.findByNombre(Rol.TipoRol.DEPOSITO)
+        // Por defecto, crear como ADMIN_DEPOSITO para compatibilidad
+        Rol rolDeposito = rolRepository.findByNombre(Rol.TipoRol.ADMIN_DEPOSITO)
                 .orElseGet(() -> {
                     Rol nuevoRol = new Rol();
-                    nuevoRol.setNombre(Rol.TipoRol.DEPOSITO);
+                    nuevoRol.setNombre(Rol.TipoRol.ADMIN_DEPOSITO);
                     return rolRepository.save(nuevoRol);
                 });
 
@@ -99,9 +102,9 @@ public class UsuarioService implements UserDetailsService {
     }
 
     public Long obtenerIdPrimerAdmin() {
-        // Obtener el admin más antiguo (menor ID) con rol ADMIN
+        // Obtener el admin más antiguo (menor ID) con rol ADMIN_PRINCIPAL
         return usuarioRepository.findAll().stream()
-                .filter(u -> u.getRol().getNombre() == Rol.TipoRol.ADMIN)
+                .filter(u -> u.getRol().getNombre() == Rol.TipoRol.ADMIN_PRINCIPAL)
                 .min((u1, u2) -> Long.compare(u1.getId(), u2.getId()))
                 .map(Usuario::getId)
                 .orElse(null);
@@ -113,6 +116,10 @@ public class UsuarioService implements UserDetailsService {
 
     public List<Usuario> obtenerTodosLosUsuarios() {
         return usuarioRepository.findAll();
+    }
+    
+    public List<Usuario> obtenerUsuariosPorRol(Rol.TipoRol tipoRol) {
+        return usuarioRepository.findByRolNombre(tipoRol);
     }
 
     @Transactional

@@ -9,5 +9,6 @@ import java.util.List;
 @Repository
 public interface GrupoRepository extends JpaRepository<Grupo, Long> {
     List<Grupo> findByActivoTrue();
+    java.util.Optional<Grupo> findByNombre(String nombre);
 }
 

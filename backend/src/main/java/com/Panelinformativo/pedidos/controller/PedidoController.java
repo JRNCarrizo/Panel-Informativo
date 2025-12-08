@@ -25,7 +25,7 @@ public class PedidoController {
     private final WebSocketService webSocketService;
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> crearPedido(@Valid @RequestBody PedidoCreateDTO dto, Authentication authentication) {
         try {
             Usuario usuario = (Usuario) authentication.getPrincipal();
@@ -38,7 +38,7 @@ public class PedidoController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<PedidoDTO>> obtenerTodosLosPedidos() {
         return ResponseEntity.ok(pedidoService.obtenerTodosLosPedidos());
     }
@@ -63,8 +63,8 @@ public class PedidoController {
     }
 
     @PutMapping("/{id}/estado")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
-    public ResponseEntity<?> actualizarEstado(@PathVariable Long id, @RequestBody String nuevoEstado) {
+    @PreAuthorize("hasAnyRole('PLANILLERO', 'CONTROL')")
+    public ResponseEntity<?> actualizarEstado(@PathVariable Long id, @RequestBody String nuevoEstado, Authentication authentication) {
         try {
             // Limpiar el string: remover comillas JSON si están presentes
             String estadoLimpio = nuevoEstado.trim();
@@ -73,7 +73,8 @@ public class PedidoController {
             }
             
             Pedido.EstadoPedido estado = Pedido.EstadoPedido.valueOf(estadoLimpio.toUpperCase());
-            PedidoDTO pedido = pedidoService.actualizarEstadoPedido(id, estado);
+            Usuario usuario = (Usuario) authentication.getPrincipal();
+            PedidoDTO pedido = pedidoService.actualizarEstadoPedido(id, estado, usuario);
             webSocketService.notificarActualizacionPedido(pedido);
             return ResponseEntity.ok(pedido);
         } catch (IllegalArgumentException e) {
@@ -82,10 +83,11 @@ public class PedidoController {
     }
 
     @PutMapping("/{id}/avanzar-etapa")
-    @PreAuthorize("hasRole('DEPOSITO')")
-    public ResponseEntity<?> avanzarEtapaPreparacion(@PathVariable Long id) {
+    @PreAuthorize("hasAnyRole('PLANILLERO', 'CONTROL')")
+    public ResponseEntity<?> avanzarEtapaPreparacion(@PathVariable Long id, Authentication authentication) {
         try {
-            PedidoDTO pedido = pedidoService.avanzarEtapaPreparacion(id);
+            Usuario usuario = (Usuario) authentication.getPrincipal();
+            PedidoDTO pedido = pedidoService.avanzarEtapaPreparacion(id, usuario);
             webSocketService.notificarActualizacionPedido(pedido);
             return ResponseEntity.ok(pedido);
         } catch (IllegalArgumentException e) {
@@ -94,7 +96,7 @@ public class PedidoController {
     }
 
     @PutMapping("/{id}/grupo")
-    @PreAuthorize("hasRole('DEPOSITO')")
+    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
     public ResponseEntity<?> asignarGrupo(@PathVariable Long id, @RequestBody Long grupoId) {
         try {
             PedidoDTO pedido = pedidoService.asignarGrupo(id, grupoId);
@@ -106,7 +108,7 @@ public class PedidoController {
     }
 
     @DeleteMapping("/{id}/grupo")
-    @PreAuthorize("hasRole('DEPOSITO')")
+    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
     public ResponseEntity<?> quitarGrupo(@PathVariable Long id) {
         try {
             PedidoDTO pedido = pedidoService.quitarGrupo(id);
@@ -118,7 +120,7 @@ public class PedidoController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> actualizarPedido(@PathVariable Long id, @Valid @RequestBody PedidoCreateDTO dto) {
         try {
             PedidoDTO pedido = pedidoService.actualizarPedido(id, dto);
@@ -130,7 +132,7 @@ public class PedidoController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> eliminarPedido(@PathVariable Long id) {
         try {
             pedidoService.eliminarPedido(id);
@@ -143,7 +145,7 @@ public class PedidoController {
 
     // Obtener pedidos pendientes sin orden de prioridad de carga (para Panel Depósito)
     @GetMapping("/pendientes/sin-orden")
-    @PreAuthorize("hasRole('DEPOSITO')")
+    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
     public ResponseEntity<List<PedidoDTO>> obtenerPedidosPendientesSinOrden() {
         return ResponseEntity.ok(pedidoService.obtenerPedidosPendientesSinOrden());
     }
@@ -156,7 +158,7 @@ public class PedidoController {
 
     // Actualizar el orden de prioridad de carga de múltiples pedidos
     @PutMapping("/prioridad-carga/orden")
-    @PreAuthorize("hasRole('DEPOSITO')")
+    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
     public ResponseEntity<?> actualizarOrdenPrioridadCarga(@RequestBody List<Long> pedidoIds) {
         try {
             List<PedidoDTO> pedidos = pedidoService.actualizarOrdenPrioridadCarga(pedidoIds);
@@ -170,7 +172,7 @@ public class PedidoController {
 
     // Remover un pedido de la cola de prioridad de carga
     @PutMapping("/{id}/prioridad-carga/remover")
-    @PreAuthorize("hasRole('DEPOSITO')")
+    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
     public ResponseEntity<?> removerDeColaPrioridadCarga(@PathVariable Long id) {
         try {
             PedidoDTO pedido = pedidoService.removerDeColaPrioridadCarga(id);
@@ -183,7 +185,7 @@ public class PedidoController {
 
     // Agregar un pedido a la cola de prioridad de carga (al final)
     @PutMapping("/{id}/prioridad-carga/agregar")
-    @PreAuthorize("hasRole('DEPOSITO')")
+    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
     public ResponseEntity<?> agregarAColaPrioridadCarga(@PathVariable Long id) {
         try {
             PedidoDTO pedido = pedidoService.agregarAColaPrioridadCarga(id);
@@ -196,14 +198,14 @@ public class PedidoController {
 
     // Obtener planillas recibidas en el día actual
     @GetMapping("/del-dia")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<List<PedidoDTO>> obtenerPlanillasRecibidasDelDia() {
         return ResponseEntity.ok(pedidoService.obtenerPlanillasRecibidasDelDia());
     }
 
     // Obtener resumen de transportistas con vueltas asignadas en el día
     @GetMapping("/transportistas-vueltas/del-dia")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<List<TransportistaVueltasDTO>> obtenerResumenTransportistasVueltasDelDia() {
         return ResponseEntity.ok(pedidoService.obtenerResumenTransportistasVueltasDelDia());
     }

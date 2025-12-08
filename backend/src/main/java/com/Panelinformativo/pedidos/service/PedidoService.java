@@ -120,7 +120,7 @@ public class PedidoService {
     }
 
     @Transactional
-    public PedidoDTO actualizarEstadoPedido(Long id, Pedido.EstadoPedido nuevoEstado) {
+    public PedidoDTO actualizarEstadoPedido(Long id, Pedido.EstadoPedido nuevoEstado, Usuario usuario) {
         Pedido pedido = pedidoRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
         
@@ -134,20 +134,42 @@ public class PedidoService {
             pedido.setEtapaPreparacion(null);
             pedido.setOrdenPrioridadCarga(null);
             pedido.setControlado(false); // Limpiar cuando se realiza
+            pedido.setFinalizadoPor(usuario.getNombreCompleto()); // Guardar quién finalizó
         }
         
         // Si vuelve a PENDIENTE desde EN_PREPARACION, solo limpiar la etapa de preparación
-        // pero MANTENER el ordenPrioridadCarga para que vuelva a aparecer en la cola de prioridad
+        // Si tiene ordenPrioridadCarga, MANTENERLO para que vuelva a aparecer en la cola de prioridad
+        // Si NO tiene ordenPrioridadCarga (porque se limpió al pasar a EN_PREPARACION), asignarle uno nuevo
         if (nuevoEstado == Pedido.EstadoPedido.PENDIENTE && estadoAnterior == Pedido.EstadoPedido.EN_PREPARACION) {
             pedido.setEtapaPreparacion(null);
             pedido.setFechaPendienteCarga(null);
             pedido.setControlado(false); // Limpiar cuando vuelve a pendiente
-            // NO limpiar ordenPrioridadCarga - mantenerlo para que vuelva a la cola de prioridad en la misma posición
+            // Si no tiene ordenPrioridadCarga, asignarle uno nuevo al final de la cola
+            if (pedido.getOrdenPrioridadCarga() == null) {
+                Integer maxOrden = pedidoRepository.findMaxOrdenPrioridadCarga();
+                pedido.setOrdenPrioridadCarga(maxOrden != null ? maxOrden + 1 : 1);
+            }
+            // Si ya tiene ordenPrioridadCarga, mantenerlo para que vuelva a la misma posición
         }
         
-        // Si pasa a EN_PREPARACION, limpiar el orden de prioridad de carga (ya no está en la cola)
-        if (nuevoEstado == Pedido.EstadoPedido.EN_PREPARACION) {
-            pedido.setOrdenPrioridadCarga(null);
+        // Si pasa a EN_PREPARACION desde PENDIENTE y es un PLANILLERO, asignar automáticamente el grupo
+        if (nuevoEstado == Pedido.EstadoPedido.EN_PREPARACION && estadoAnterior == Pedido.EstadoPedido.PENDIENTE) {
+            pedido.setOrdenPrioridadCarga(null); // Limpiar el orden de prioridad de carga (ya no está en la cola)
+            
+            // Si el usuario tiene rol PLANILLERO y no hay grupo asignado, asignar automáticamente
+            if (usuario.getRol().getNombre() == com.Panelinformativo.usuarios.model.Rol.TipoRol.PLANILLERO 
+                    && pedido.getGrupoAsignado() == null) {
+                // Buscar o crear un grupo con el nombre del usuario
+                Grupo grupo = grupoRepository.findByNombre(usuario.getNombreCompleto())
+                        .orElseGet(() -> {
+                            // Crear nuevo grupo si no existe
+                            Grupo nuevoGrupo = new Grupo();
+                            nuevoGrupo.setNombre(usuario.getNombreCompleto());
+                            nuevoGrupo.setActivo(true);
+                            return grupoRepository.save(nuevoGrupo);
+                        });
+                pedido.setGrupoAsignado(grupo);
+            }
         }
         
         pedido = pedidoRepository.save(pedido);
@@ -155,7 +177,7 @@ public class PedidoService {
     }
 
     @Transactional
-    public PedidoDTO avanzarEtapaPreparacion(Long id) {
+    public PedidoDTO avanzarEtapaPreparacion(Long id, Usuario usuario) {
         Pedido pedido = pedidoRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado"));
         
@@ -168,15 +190,19 @@ public class PedidoService {
             // Cuando pasa a CONTROL, establecer como sin controlar
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.CONTROL);
             pedido.setControlado(false);
+            pedido.setControladoPor(null); // Limpiar cuando pasa a CONTROL
         } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.CONTROL) {
-            // Cuando pasa a PENDIENTE_CARGA desde CONTROL, establecer como controlado
+            // Cuando pasa a PENDIENTE_CARGA desde CONTROL, establecer como controlado y guardar quién hizo el control
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.PENDIENTE_CARGA);
             pedido.setControlado(true);
+            pedido.setControladoPor(usuario.getNombreCompleto()); // Guardar el nombre del usuario que hizo el control
             pedido.setFechaPendienteCarga(LocalDateTime.now()); // Guardar fecha cuando pasa a PENDIENTE_CARGA
         } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.PENDIENTE_CARGA) {
             pedido.setEstado(Pedido.EstadoPedido.REALIZADO);
             pedido.setEtapaPreparacion(null);
             pedido.setControlado(false); // Limpiar cuando se realiza
+            // NO limpiar controladoPor, mantenerlo para el historial
+            pedido.setFinalizadoPor(usuario.getNombreCompleto()); // Guardar quién finalizó
         }
         
         pedido = pedidoRepository.save(pedido);
@@ -352,6 +378,8 @@ public class PedidoService {
         dto.setFechaEntrega(pedido.getFechaEntrega());
         dto.setOrdenPrioridadCarga(pedido.getOrdenPrioridadCarga());
         dto.setControlado(pedido.getControlado());
+        dto.setControladoPor(pedido.getControladoPor());
+        dto.setFinalizadoPor(pedido.getFinalizadoPor());
 
         if (pedido.getTransportista() != null) {
             dto.setTransportistaId(pedido.getTransportista().getId());

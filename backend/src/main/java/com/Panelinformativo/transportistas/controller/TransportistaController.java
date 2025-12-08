@@ -18,7 +18,7 @@ public class TransportistaController {
     private final TransportistaService transportistaService;
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> crearTransportista(@RequestBody Map<String, String> body) {
         try {
             String nombre = body.get("nombre");
@@ -32,31 +32,31 @@ public class TransportistaController {
     }
 
     @GetMapping("/buscar")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<TransportistaDTO>> buscarTransportistas(@RequestParam String busqueda) {
         return ResponseEntity.ok(transportistaService.buscarTransportistas(busqueda));
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<TransportistaDTO>> obtenerTodosLosTransportistas() {
         return ResponseEntity.ok(transportistaService.obtenerTodosLosTransportistas());
     }
 
     @GetMapping("/activos")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<TransportistaDTO>> obtenerTransportistasActivos() {
         return ResponseEntity.ok(transportistaService.obtenerTransportistasActivos());
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<TransportistaDTO> obtenerTransportistaPorId(@PathVariable Long id) {
         return ResponseEntity.ok(transportistaService.obtenerTransportistaPorId(id));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> actualizarTransportista(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         try {
             String nombre = body.get("nombre") != null ? (String) body.get("nombre") : null;
@@ -68,7 +68,7 @@ public class TransportistaController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> eliminarTransportista(@PathVariable Long id) {
         try {
             transportistaService.eliminarTransportista(id);

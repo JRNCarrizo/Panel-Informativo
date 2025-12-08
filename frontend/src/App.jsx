@@ -28,8 +28,15 @@ const PrivateRoute = ({ children, requiredRole }) => {
     return <Navigate to="/login" replace />;
   }
 
-  if (requiredRole && user.rol !== requiredRole) {
-    return <Navigate to={user.rol === 'ADMIN' ? '/admin' : '/deposito'} replace />;
+  if (requiredRole) {
+    // ADMIN_PRINCIPAL solo puede acceder a /admin
+    if (requiredRole === 'ADMIN_PRINCIPAL' && user.rol !== 'ADMIN_PRINCIPAL') {
+      return <Navigate to="/deposito" replace />;
+    }
+    // Cualquier rol de depósito puede acceder a /deposito
+    if (requiredRole === 'DEPOSITO' && !['ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL'].includes(user.rol)) {
+      return <Navigate to="/admin" replace />;
+    }
   }
 
   return children;
@@ -54,7 +61,11 @@ const PublicRoute = ({ children }) => {
 
   // Si ya está autenticado, redirigir al panel correspondiente
   if (user) {
-    return <Navigate to={user.rol === 'ADMIN' ? '/admin' : '/deposito'} replace />;
+    if (user.rol === 'ADMIN_PRINCIPAL') {
+      return <Navigate to="/admin" replace />;
+    } else if (['ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL'].includes(user.rol)) {
+      return <Navigate to="/deposito" replace />;
+    }
   }
 
   return children;
@@ -82,7 +93,7 @@ function App() {
         <Route
           path="/admin"
           element={
-            <PrivateRoute requiredRole="ADMIN">
+            <PrivateRoute requiredRole="ADMIN_PRINCIPAL">
               <AdminPanel />
             </PrivateRoute>
           }

@@ -74,6 +74,12 @@ public class Pedido {
     @Column(nullable = false)
     private Boolean controlado = false; // Indica si el pedido ha sido controlado cuando está en etapa CONTROL
 
+    @Column(nullable = true)
+    private String controladoPor; // Nombre del usuario que hizo el control
+
+    @Column(nullable = true)
+    private String finalizadoPor; // Nombre del usuario que finalizó el pedido
+
     @PreUpdate
     protected void onUpdate() {
         fechaActualizacion = LocalDateTime.now();

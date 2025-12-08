@@ -17,8 +17,8 @@ const AdminPanel = () => {
   const { user, logout } = useAuth();
   const [pedidos, setPedidos] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
+  const [usuariosRolesAsignados, setUsuariosRolesAsignados] = useState([]); // Para PLANILLERO y CONTROL
   const [transportistas, setTransportistas] = useState([]);
-  const [equipos, setEquipos] = useState([]);
   const [zonas, setZonas] = useState([]);
   const [vueltas, setVueltas] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -72,7 +72,7 @@ const AdminPanel = () => {
     username: '',
     password: '',
     nombreCompleto: '',
-    rol: 'DEPOSITO',
+    rol: 'ADMIN_PRINCIPAL', // Valor por defecto
   });
   const [idPrimerAdmin, setIdPrimerAdmin] = useState(null);
   const [transportistaForm, setTransportistaForm] = useState({
@@ -211,10 +211,6 @@ const AdminPanel = () => {
     cargarTransportistas().catch(err => {
       console.warn('Error al cargar transportistas (puede ser normal si el backend no se reinició):', err);
     });
-    // Cargar equipos en paralelo pero no esperar si falla
-    cargarEquipos().catch(err => {
-      console.warn('Error al cargar equipos (puede ser normal si el backend no se reinició):', err);
-    });
     // Cargar zonas en paralelo pero no esperar si falla
     cargarZonas().catch(err => {
       console.warn('Error al cargar zonas (puede ser normal si el backend no se reinició):', err);
@@ -251,19 +247,6 @@ const AdminPanel = () => {
     }
   };
 
-  const cargarEquipos = async () => {
-    try {
-      const response = await grupoService.obtenerTodos();
-      setEquipos(response.data || []);
-    } catch (error) {
-      console.error('Error al cargar equipos:', error);
-      // Si es error 403, podría ser que el token expiró o el backend necesita reiniciarse
-      if (error.response?.status === 403) {
-        console.warn('Error 403 al cargar equipos. Verifica que el backend esté corriendo y que tengas sesión activa.');
-      }
-      setEquipos([]); // Establecer array vacío para evitar errores
-    }
-  };
 
   const cargarZonas = async () => {
     try {
@@ -339,8 +322,8 @@ const AdminPanel = () => {
       setPedidos([]);
       setTextoBusqueda(''); // Limpiar búsqueda al cambiar de pestaña
       cargarSegunPestaña();
-    } else if (activeTab === 'equipos') {
-      cargarEquipos();
+    } else if (activeTab === 'roles-asignados') {
+      cargarUsuariosRolesAsignados();
     } else if (activeTab === 'zonas') {
       cargarZonas();
     } else if (activeTab === 'vueltas') {
@@ -399,9 +382,16 @@ const AdminPanel = () => {
     };
   }, [activeTab, showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal]);
 
-  // Enfocar el primer campo cuando se abre el modal de pedidos
+  // Enfocar el primer campo cuando se abre el modal de pedidos y establecer fecha por defecto
   useEffect(() => {
-    if (showModal && numeroPlanillaRef.current) {
+    if (showModal) {
+      // Establecer fecha de hoy por defecto si no hay fecha seleccionada
+      if (!formData.fechaEntrega) {
+        const hoy = new Date();
+        const fechaHoy = hoy.toISOString().split('T')[0];
+        setFormData(prev => ({ ...prev, fechaEntrega: fechaHoy }));
+      }
+      
       // Pequeño delay para asegurar que el modal esté completamente renderizado
       setTimeout(() => {
         numeroPlanillaRef.current?.focus();
@@ -463,6 +453,44 @@ const AdminPanel = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Función para reproducir sonido de notificación
+  const reproducirSonidoNotificacion = () => {
+    try {
+      // Crear un contexto de audio
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // Crear un oscilador para generar el sonido
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      // Conectar el oscilador al nodo de ganancia y al destino
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      // Configurar el sonido (tono de notificación)
+      oscillator.frequency.value = 800; // Frecuencia en Hz (tono medio-agudo)
+      oscillator.type = 'sine'; // Tipo de onda (sinusoidal, suave)
+      
+      // Configurar el volumen (envelope)
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01); // Subir rápido
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2); // Bajar suavemente
+      
+      // Reproducir el sonido
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2); // Duración de 200ms
+      
+      // Limpiar después de que termine
+      oscillator.onended = () => {
+        audioContext.close();
+      };
+    } catch (error) {
+      // Si hay algún error (por ejemplo, el usuario no ha interactuado con la página),
+      // simplemente no reproducir el sonido
+      console.warn('No se pudo reproducir el sonido de notificación:', error);
+    }
+  };
+
   // Suscribirse a mensajes nuevos vía WebSocket para actualizar contador en tiempo real
   useEffect(() => {
     if (!user?.rol) return;
@@ -478,7 +506,8 @@ const AdminPanel = () => {
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,
       onConnect: () => {
-        const rolUsuario = user.rol.toLowerCase();
+        // AdminPanel solo para ADMIN_PRINCIPAL
+        const rolUsuario = user.rol.toLowerCase(); // Debería ser 'admin_principal'
         const topicNuevo = '/topic/mensajes/nuevo';
         const topicLeido = `/topic/mensajes/leido/${rolUsuario}`;
         const topicTodosLeidos = `/topic/mensajes/todos-leidos/${rolUsuario}`;
@@ -486,8 +515,13 @@ const AdminPanel = () => {
         // Suscribirse a mensajes nuevos
         client.subscribe(topicNuevo, (message) => {
           const nuevoMensaje = JSON.parse(message.body);
-          // Solo actualizar si el mensaje es para nuestro rol
+          // Solo actualizar si el mensaje es para nuestro rol (ADMIN_PRINCIPAL)
           if (nuevoMensaje.rolDestinatario === user.rol) {
+            // Reproducir sonido solo si el chat está cerrado y el mensaje no es del propio usuario
+            if (!showChat && String(nuevoMensaje.remitenteId) !== String(user?.id)) {
+              reproducirSonidoNotificacion();
+            }
+            
             // Actualizar contador de forma optimista (incrementar inmediatamente)
             setCantidadMensajesNoLeidos(prev => {
               // Si el mensaje no está leído, incrementar
@@ -514,13 +548,13 @@ const AdminPanel = () => {
     });
 
     client.activate();
-
+    
     return () => {
       if (client) {
         client.deactivate();
       }
     };
-  }, [user?.rol]);
+  }, [user?.rol, showChat]);
 
   // Cerrar modal con ESC
   useEffect(() => {
@@ -534,7 +568,7 @@ const AdminPanel = () => {
           setTransportistaForm({ codigoInterno: '', chofer: '', vehiculo: '' });
         } else if (showUsuarioModal) {
           setShowUsuarioModal(false);
-          setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'DEPOSITO' });
+          setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'ADMIN_PRINCIPAL' });
         } else if (showZonaModal) {
           setShowZonaModal(false);
           setZonaForm({ nombre: '' });
@@ -560,6 +594,60 @@ const AdminPanel = () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal, showChat, showModalDetalle]);
+
+  // Navegación con flechas izquierda/derecha entre pestañas
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // No navegar si hay un modal abierto o si estamos en un input/textarea/select
+      if (showModal || showTransportistaModal || showUsuarioModal || showZonaModal || showVueltaModal || showChat || showModalDetalle || showResumenModal) {
+        return;
+      }
+
+      const focusedElement = document.activeElement;
+      const isInputFocused = focusedElement && (
+        focusedElement.tagName === 'INPUT' || 
+        focusedElement.tagName === 'TEXTAREA' || 
+        focusedElement.tagName === 'SELECT' ||
+        focusedElement.isContentEditable
+      );
+
+      // Si estamos escribiendo en un input, no navegar
+      if (isInputFocused) {
+        return;
+      }
+
+      // Navegación con flechas izquierda/derecha entre pestañas
+      const tabs = ['pedidos', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'roles-asignados'];
+      const currentIndex = tabs.indexOf(activeTab);
+
+      if (event.key === 'ArrowLeft' && currentIndex > 0) {
+        event.preventDefault();
+        setActiveTab(tabs[currentIndex - 1]);
+        // Enfocar el botón de la pestaña activa
+        setTimeout(() => {
+          const tabButton = document.querySelector(`.tabs button[class*="active"]`);
+          if (tabButton) {
+            tabButton.focus();
+          }
+        }, 100);
+      } else if (event.key === 'ArrowRight' && currentIndex < tabs.length - 1) {
+        event.preventDefault();
+        setActiveTab(tabs[currentIndex + 1]);
+        // Enfocar el botón de la pestaña activa
+        setTimeout(() => {
+          const tabButton = document.querySelector(`.tabs button[class*="active"]`);
+          if (tabButton) {
+            tabButton.focus();
+          }
+        }, 100);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeTab, showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal, showChat, showModalDetalle, showResumenModal]);
 
   // Manejar flechas arriba/abajo en el campo de fecha de entrega
   useEffect(() => {
@@ -651,7 +739,7 @@ const AdminPanel = () => {
           return;
         }
 
-      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'equipos'];
+      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'roles-asignados'];
       const currentIndex = tabs.indexOf(activeTab);
 
       // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros ni de sub-pestañas)
@@ -675,9 +763,29 @@ const AdminPanel = () => {
   const cargarUsuarios = async () => {
     try {
       const response = await usuarioService.obtenerTodos();
-      setUsuarios(response.data);
+      // Filtrar solo ADMIN_PRINCIPAL y ADMIN_DEPOSITO para la pestaña Administradores
+      const usuariosFiltrados = response.data.filter(u => 
+        u.rol?.nombre === 'ADMIN_PRINCIPAL' || u.rol?.nombre === 'ADMIN_DEPOSITO'
+      );
+      setUsuarios(usuariosFiltrados);
     } catch (error) {
       console.error('Error al cargar usuarios:', error);
+    }
+  };
+
+  const cargarUsuariosRolesAsignados = async () => {
+    try {
+      // Cargar usuarios PLANILLERO y CONTROL
+      const [planillerosResponse, controlResponse] = await Promise.all([
+        usuarioService.obtenerPorRol('PLANILLERO'),
+        usuarioService.obtenerPorRol('CONTROL')
+      ]);
+      const planilleros = planillerosResponse.data || [];
+      const control = controlResponse.data || [];
+      setUsuariosRolesAsignados([...planilleros, ...control]);
+    } catch (error) {
+      console.error('Error al cargar usuarios de roles asignados:', error);
+      setUsuariosRolesAsignados([]);
     }
   };
 
@@ -808,13 +916,16 @@ const AdminPanel = () => {
       }
 
       // Convertir cantidad a número si existe y limpiar vueltaNombre
+      // Si no hay fecha seleccionada, usar la fecha de hoy
+      const fechaEntrega = formData.fechaEntrega || new Date().toISOString().split('T')[0];
+      
       const dataToSend = {
         numeroPlanilla: formData.numeroPlanilla,
         transportistaNombre: formData.transportistaNombre.trim(),
         zonaNombre: formData.zonaNombre && formData.zonaNombre.trim() !== '' ? formData.zonaNombre.trim() : null,
         cantidad: parseInt(formData.cantidad),
         vueltaNombre: formData.vueltaNombre.trim(),
-        fechaEntrega: formData.fechaEntrega || null, // Si no se proporciona, será null y el backend usará hoy
+        fechaEntrega: fechaEntrega, // Siempre enviar una fecha (hoy por defecto)
       };
       console.log('Datos a enviar:', dataToSend);
       await pedidoService.crear(dataToSend);
@@ -931,12 +1042,23 @@ const AdminPanel = () => {
       const api = (await import('../config/axios')).default;
       await api.post('/usuarios', usuarioForm);
       setShowUsuarioModal(false);
-      setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'DEPOSITO' });
+      setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'ADMIN_PRINCIPAL' });
       cargarUsuarios();
       alert('Usuario creado exitosamente');
     } catch (error) {
       alert(error.response?.data || 'Error al crear usuario');
     }
+  };
+
+  // Función para formatear el nombre del rol para mostrar
+  const formatearNombreRol = (rolNombre) => {
+    const nombresRoles = {
+      'ADMIN_PRINCIPAL': 'Administrador Principal',
+      'ADMIN_DEPOSITO': 'Administrador Depósito',
+      'PLANILLERO': 'Planillero',
+      'CONTROL': 'Control'
+    };
+    return nombresRoles[rolNombre] || rolNombre;
   };
 
 
@@ -1556,13 +1678,13 @@ const AdminPanel = () => {
           className={activeTab === 'usuarios' ? 'active' : ''}
           onClick={() => setActiveTab('usuarios')}
         >
-          Usuarios
+          Administradores
         </button>
         <button
-          className={activeTab === 'equipos' ? 'active' : ''}
-          onClick={() => setActiveTab('equipos')}
+          className={activeTab === 'roles-asignados' ? 'active' : ''}
+          onClick={() => setActiveTab('roles-asignados')}
         >
-          Equipos
+          Roles Asignados
         </button>
       </div>
 
@@ -2464,7 +2586,8 @@ const AdminPanel = () => {
                                     <div style={{ 
                                       fontSize: '0.9rem', 
                                       color: '#F57C00',
-                                      fontWeight: '500'
+                                      fontWeight: '500',
+                                      marginBottom: '4px'
                                     }}>
                                       {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
                                         year: 'numeric',
@@ -2475,6 +2598,18 @@ const AdminPanel = () => {
                                   hour12: false,
                                 })}
                                     </div>
+                                    {pedido.controladoPor && (
+                                      <div style={{ 
+                                        fontSize: '0.85rem', 
+                                        color: '#E65100',
+                                        fontWeight: '500',
+                                        marginTop: '4px',
+                                        paddingTop: '4px',
+                                        borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                                      }}>
+                                        <strong>Controlado por:</strong> {pedido.controladoPor}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                                 <div style={{
@@ -2495,7 +2630,8 @@ const AdminPanel = () => {
                                   <div style={{ 
                                     fontSize: '0.9rem', 
                                     color: '#15803d',
-                                    fontWeight: '500'
+                                    fontWeight: '500',
+                                    marginBottom: '4px'
                                   }}>
                                   {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
                                     year: 'numeric',
@@ -2506,6 +2642,18 @@ const AdminPanel = () => {
                                     hour12: false,
                                   })}
                                   </div>
+                                  {pedido.finalizadoPor && (
+                                    <div style={{ 
+                                      fontSize: '0.85rem', 
+                                      color: '#15803d',
+                                      fontWeight: '500',
+                                      marginTop: '4px',
+                                      paddingTop: '4px',
+                                      borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                                    }}>
+                                      <strong>Finalizado por:</strong> {pedido.finalizadoPor}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             )}
@@ -2675,42 +2823,44 @@ const AdminPanel = () => {
         </div>
       )}
 
-      {activeTab === 'equipos' && (
+      {activeTab === 'roles-asignados' && (
         <div className="content-section">
           <div className="table-container">
             <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
-              <h2 style={{ margin: 0, color: '#333' }}>Equipos</h2>
+              <h2 style={{ margin: 0, color: '#333' }}>Roles Asignados</h2>
             </div>
             <table>
               <thead>
                 <tr>
-                  <th>ID</th>
+                  <th>Usuario</th>
                   <th>Nombre</th>
+                  <th>Rol</th>
                   <th>Estado</th>
                 </tr>
               </thead>
               <tbody>
-                {equipos.length === 0 ? (
+                {usuariosRolesAsignados.length === 0 ? (
                   <tr>
-                    <td colSpan="3" style={{ textAlign: 'center', padding: '20px' }}>
-                      No hay equipos registrados
+                    <td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>
+                      No hay usuarios asignados
                     </td>
                   </tr>
                 ) : (
-                  equipos.map((equipo) => (
-                    <tr key={equipo.id}>
-                      <td>{equipo.id}</td>
-                      <td>{equipo.nombre}</td>
+                  usuariosRolesAsignados.map((usuario) => (
+                    <tr key={usuario.id}>
+                      <td>{usuario.username}</td>
+                      <td>{usuario.nombreCompleto}</td>
+                      <td>{formatearNombreRol(usuario.rol.nombre)}</td>
                       <td>
                         <span style={{
                           padding: '4px 12px',
                           borderRadius: '12px',
                           fontSize: '0.85em',
                           fontWeight: 'bold',
-                          backgroundColor: equipo.activo !== false ? '#E8F5E9' : '#FFEBEE',
-                          color: equipo.activo !== false ? '#2E7D32' : '#C62828'
+                          backgroundColor: usuario.activo ? '#E8F5E9' : '#FFEBEE',
+                          color: usuario.activo ? '#2E7D32' : '#C62828'
                         }}>
-                          {equipo.activo !== false ? 'Activo' : 'Inactivo'}
+                          {usuario.activo ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
                     </tr>
@@ -2848,7 +2998,7 @@ const AdminPanel = () => {
         <div className="content-section">
           <div className="table-container">
             <div className="section-header" style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0' }}>
-              <h2 style={{ margin: 0, color: '#333' }}>Usuarios</h2>
+              <h2 style={{ margin: 0, color: '#333' }}>Administradores</h2>
               <button
                 onClick={() => setShowUsuarioModal(true)}
                 style={{
@@ -2883,7 +3033,7 @@ const AdminPanel = () => {
                   <tr key={usuario.id}>
                     <td>{usuario.username}</td>
                     <td>{usuario.nombreCompleto}</td>
-                    <td>{usuario.rol.nombre}</td>
+                    <td>{formatearNombreRol(usuario.rol.nombre)}</td>
                     <td>
                       <span style={{
                         padding: '4px 12px',
@@ -3958,8 +4108,8 @@ const AdminPanel = () => {
                   }}
                   required
                 >
-                  <option value="DEPOSITO">Depósito</option>
-                  <option value="ADMIN">Administrador</option>
+                  <option value="ADMIN_PRINCIPAL">Administrador Principal</option>
+                  <option value="ADMIN_DEPOSITO">Administrador Depósito</option>
                 </select>
               </div>
               <div className="modal-actions">
@@ -4232,7 +4382,7 @@ const AdminPanel = () => {
             setShowChat(false);
             actualizarCantidadMensajesNoLeidos();
           }}
-          rolDestinatario={user?.rol === 'ADMIN' ? 'DEPOSITO' : 'ADMIN'}
+          rolDestinatario={user?.rol === 'ADMIN_PRINCIPAL' ? 'ADMIN_DEPOSITO' : 'ADMIN_PRINCIPAL'}
         />
       )}
 
@@ -4397,9 +4547,22 @@ const AdminPanel = () => {
                     <div className="info-label">📅 Fecha de Despacho</div>
                     <div className="info-value">
                       {(() => {
+                        // Función auxiliar para parsear fecha sin problemas de zona horaria
+                        const parseFechaLocal = (fechaString) => {
+                          if (!fechaString) return null;
+                          if (fechaString instanceof Date) return fechaString;
+                          const parts = fechaString.split('-');
+                          if (parts.length !== 3) return new Date(fechaString);
+                          const year = parseInt(parts[0], 10);
+                          const month = parseInt(parts[1], 10) - 1;
+                          const day = parseInt(parts[2], 10);
+                          return new Date(year, month, day);
+                        };
+
                         const hoy = new Date();
                         hoy.setHours(0, 0, 0, 0);
-                        const fechaEntrega = new Date(pedidoSeleccionado.fechaEntrega);
+                        const fechaEntrega = parseFechaLocal(pedidoSeleccionado.fechaEntrega);
+                        if (!fechaEntrega) return 'Fecha inválida';
                         fechaEntrega.setHours(0, 0, 0, 0);
                         const diffTime = fechaEntrega - hoy;
                         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
@@ -4480,7 +4643,8 @@ const AdminPanel = () => {
                         <div style={{ 
                           fontSize: '0.9rem', 
                           color: '#0097a7',
-                          fontWeight: '500'
+                          fontWeight: '500',
+                          marginBottom: '4px'
                         }}>
                           {new Date(pedidoSeleccionado.fechaPendienteCarga).toLocaleString('es-AR', {
                             year: 'numeric',
@@ -4491,6 +4655,18 @@ const AdminPanel = () => {
                             hour12: false,
                           })}
                         </div>
+                        {pedidoSeleccionado.controladoPor && (
+                          <div style={{ 
+                            fontSize: '0.85rem', 
+                            color: '#00838f',
+                            fontWeight: '500',
+                            marginTop: '4px',
+                            paddingTop: '4px',
+                            borderTop: '1px solid rgba(0, 131, 143, 0.2)'
+                          }}>
+                            <strong>Controlado por:</strong> {pedidoSeleccionado.controladoPor}
+                          </div>
+                        )}
                       </div>
                     )}
                     <div style={{
@@ -4511,7 +4687,8 @@ const AdminPanel = () => {
                       <div style={{ 
                         fontSize: '0.9rem', 
                         color: '#15803d',
-                        fontWeight: '500'
+                        fontWeight: '500',
+                        marginBottom: '4px'
                       }}>
                         {new Date(pedidoSeleccionado.fechaActualizacion).toLocaleString('es-AR', {
                           year: 'numeric',
@@ -4522,6 +4699,18 @@ const AdminPanel = () => {
                           hour12: false,
                         })}
                       </div>
+                      {pedidoSeleccionado.finalizadoPor && (
+                        <div style={{ 
+                          fontSize: '0.85rem', 
+                          color: '#15803d',
+                          fontWeight: '500',
+                          marginTop: '4px',
+                          paddingTop: '4px',
+                          borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                        }}>
+                          <strong>Finalizado por:</strong> {pedidoSeleccionado.finalizadoPor}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

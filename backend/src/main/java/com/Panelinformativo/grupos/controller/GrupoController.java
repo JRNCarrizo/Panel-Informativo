@@ -18,26 +18,26 @@ public class GrupoController {
     private final GrupoService grupoService;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<GrupoDTO> crearGrupo(@RequestBody Map<String, String> body) {
         String nombre = body.get("nombre");
         return ResponseEntity.ok(grupoService.crearGrupo(nombre));
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<GrupoDTO>> obtenerTodosLosGrupos() {
         return ResponseEntity.ok(grupoService.obtenerTodosLosGrupos());
     }
 
     @GetMapping("/activos")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<GrupoDTO>> obtenerGruposActivos() {
         return ResponseEntity.ok(grupoService.obtenerGruposActivos());
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<?> actualizarGrupo(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         try {
             String nombre = body.get("nombre") != null ? (String) body.get("nombre") : null;
@@ -49,7 +49,7 @@ public class GrupoController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<?> eliminarGrupo(@PathVariable Long id) {
         try {
             grupoService.eliminarGrupo(id);

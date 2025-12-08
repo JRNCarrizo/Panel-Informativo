@@ -18,7 +18,7 @@ public class VueltaController {
     private final VueltaService vueltaService;
 
     @PostMapping("/crear-o-obtener")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<VueltaDTO> crearObtenerVuelta(@RequestBody Map<String, String> body) {
         String nombre = body.get("nombre");
         if (nombre == null || nombre.trim().isEmpty()) {
@@ -28,25 +28,25 @@ public class VueltaController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<VueltaDTO>> obtenerTodasLasVueltas() {
         return ResponseEntity.ok(vueltaService.obtenerTodasLasVueltas());
     }
 
     @GetMapping("/activas")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<VueltaDTO>> obtenerVueltasActivas() {
         return ResponseEntity.ok(vueltaService.obtenerVueltasActivas());
     }
 
     @GetMapping("/buscar")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<List<VueltaDTO>> buscarVueltas(@RequestParam String q) {
         return ResponseEntity.ok(vueltaService.buscarVueltas(q));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO', 'PLANILLERO', 'CONTROL')")
     public ResponseEntity<VueltaDTO> obtenerVueltaPorId(@PathVariable Long id) {
         try {
             return ResponseEntity.ok(vueltaService.obtenerVueltaPorId(id));
@@ -56,7 +56,7 @@ public class VueltaController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> actualizarVuelta(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         try {
             String nombre = body.get("nombre") != null ? (String) body.get("nombre") : null;
@@ -68,7 +68,7 @@ public class VueltaController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN_PRINCIPAL')")
     public ResponseEntity<?> eliminarVuelta(@PathVariable Long id) {
         try {
             vueltaService.eliminarVuelta(id);

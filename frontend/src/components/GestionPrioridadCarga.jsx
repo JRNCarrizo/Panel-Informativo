@@ -493,13 +493,26 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
     return '#666';
   };
 
+  // Función auxiliar para parsear fecha sin problemas de zona horaria
+  const parseFechaLocal = (fechaString) => {
+    if (!fechaString) return null;
+    if (fechaString instanceof Date) return fechaString;
+    const parts = fechaString.split('-');
+    if (parts.length !== 3) return new Date(fechaString);
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    return new Date(year, month, day);
+  };
+
   const getFechaEntregaTexto = (pedido) => {
     if (!pedido.fechaEntrega) return null;
     
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
     
-    const fechaEntrega = new Date(pedido.fechaEntrega);
+    const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+    if (!fechaEntrega) return null;
     fechaEntrega.setHours(0, 0, 0, 0);
     
     const diffTime = fechaEntrega - hoy;
@@ -935,7 +948,8 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
                       {(() => {
                         const hoy = new Date();
                         hoy.setHours(0, 0, 0, 0);
-                        const fechaEntrega = new Date(pedidoSeleccionado.fechaEntrega);
+                        const fechaEntrega = parseFechaLocal(pedidoSeleccionado.fechaEntrega);
+                        if (!fechaEntrega) return 'Fecha inválida';
                         fechaEntrega.setHours(0, 0, 0, 0);
                         const diffTime = fechaEntrega - hoy;
                         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
@@ -1081,90 +1095,192 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
                   <div
                     key={pedido.id}
                     style={{
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      padding: '16px',
+                      background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
+                      border: '2px solid #e2e8f0',
+                      borderRadius: '12px',
+                      padding: '18px 24px',
                       display: 'flex',
-                      gap: '16px',
-                      alignItems: 'flex-start',
+                      gap: '20px',
+                      alignItems: 'center',
                       position: 'relative',
+                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04)',
+                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'translateX(4px)';
+                      e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08)';
+                      e.currentTarget.style.borderColor = '#6366f1';
+                      e.currentTarget.style.background = 'linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'translateX(0)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.borderColor = '#e2e8f0';
+                      e.currentTarget.style.background = 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)';
+                    }}
+                    onClick={() => {
+                      cerrarModalPlanillasDelDia();
+                      abrirModalDetalle(pedido);
                     }}
                   >
-                    <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px' }}>Nro. Planilla</div>
-                        <div style={{ fontWeight: '600', color: '#1e293b' }}>{pedido.numeroPlanilla}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px' }}>Cantidad</div>
-                        <div style={{ fontWeight: '600', color: '#1e293b' }}>{pedido.cantidad || 'N/A'}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px' }}>Zona</div>
-                        <div style={{ fontWeight: '600', color: '#1e293b' }}>{pedido.zonaNombre || 'N/A'}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px' }}>Transporte</div>
-                        <div style={{ fontWeight: '600', color: '#1e293b' }}>
-                          {pedido.transportistaNombre || pedido.transportista || 'N/A'}
-                        </div>
-                      </div>
+                    {/* Icono de planilla */}
+                    <div style={{
+                      width: '56px',
+                      height: '56px',
+                      borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '1.8rem',
+                      color: 'white',
+                      fontWeight: '700',
+                      boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
+                      flexShrink: 0
+                    }}>
+                      📋
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-end', minWidth: '120px' }}>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px', textAlign: 'right' }}>Estado</div>
+
+                    {/* Información principal */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
+                      {/* Header con número de planilla y estado */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                          <h3 style={{ 
+                            margin: 0, 
+                            fontSize: '1.3rem', 
+                            fontWeight: '700', 
+                            color: '#1e293b',
+                            letterSpacing: '-0.02em'
+                          }}>
+                            {pedido.numeroPlanilla}
+                          </h3>
+                          {pedido.fechaCreacion && (
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              color: '#64748b', 
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              🕐 {new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                          )}
+                        </div>
                         <span
                           style={{
                             backgroundColor: getEstadoColor(pedido),
                             color: 'white',
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            fontSize: '0.85rem',
-                            fontWeight: '600',
-                            display: 'inline-block',
+                            padding: '6px 14px',
+                            borderRadius: '8px',
+                            fontSize: '0.8rem',
+                            fontWeight: '700',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0
                           }}
                         >
                           {getEstadoTexto(pedido)}
                         </span>
                       </div>
-                      <button
-                        onClick={() => {
-                          cerrarModalPlanillasDelDia();
-                          abrirModalDetalle(pedido);
-                        }}
-                        style={{
-                          padding: '6px 12px',
-                          backgroundColor: '#2196F3',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          fontSize: '0.85rem',
-                          fontWeight: '600',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        👁️ Ver
-                      </button>
-                    </div>
-                    {pedido.fechaCreacion && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          bottom: '8px',
-                          left: '16px',
-                          fontSize: '0.75rem',
-                          color: '#9ca3af',
-                          fontStyle: 'italic',
-                        }}
-                      >
-                        {new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })}
+
+                      {/* Detalles en una línea */}
+                      <div style={{ 
+                        display: 'flex', 
+                        flexWrap: 'wrap',
+                        gap: '16px',
+                        alignItems: 'center',
+                        fontSize: '0.9rem',
+                        color: '#475569'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '1rem' }}>🚚</span>
+                          <span style={{ fontWeight: '600', color: '#1e293b' }}>
+                            {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
+                          </span>
+                        </div>
+                        
+                        {pedido.vueltaNombre && (
+                          <>
+                            <span style={{ color: '#cbd5e1' }}>•</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '1rem' }}>🔄</span>
+                              <span style={{ fontWeight: '600', color: '#1e293b' }}>
+                                {pedido.vueltaNombre}
+                              </span>
+                            </div>
+                          </>
+                        )}
+
+                        {getFechaEntregaTexto(pedido) && (
+                          <>
+                            <span style={{ color: '#cbd5e1' }}>•</span>
+                            <div style={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: '6px',
+                              padding: '4px 10px',
+                              background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                              borderRadius: '6px',
+                              border: '1px solid #93c5fd'
+                            }}>
+                              <span style={{ fontSize: '1rem' }}>📅</span>
+                              <span style={{ fontWeight: '700', color: '#1e40af', fontSize: '0.85rem' }}>
+                                {getFechaEntregaTexto(pedido)}
+                              </span>
+                            </div>
+                          </>
+                        )}
                       </div>
-                    )}
+                    </div>
+
+                    {/* Botón de acción */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cerrarModalPlanillasDelDia();
+                        abrirModalDetalle(pedido);
+                      }}
+                      style={{
+                        padding: '10px 20px',
+                        backgroundColor: '#6366f1',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        fontWeight: '700',
+                        transition: 'all 0.2s',
+                        boxShadow: '0 2px 4px rgba(99, 102, 241, 0.3)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = '#4f46e5';
+                        e.target.style.transform = 'scale(1.05)';
+                        e.target.style.boxShadow = '0 4px 8px rgba(99, 102, 241, 0.4)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = '#6366f1';
+                        e.target.style.transform = 'scale(1)';
+                        e.target.style.boxShadow = '0 2px 4px rgba(99, 102, 241, 0.3)';
+                      }}
+                    >
+                      <span>👁️</span>
+                      <span>Ver</span>
+                    </button>
                   </div>
                 ))}
               </div>

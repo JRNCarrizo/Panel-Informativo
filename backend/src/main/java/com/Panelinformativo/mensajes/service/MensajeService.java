@@ -41,14 +41,25 @@ public class MensajeService {
         return mensajeDTO;
     }
 
-    public List<MensajeDTO> obtenerMensajesDelDia(Rol.TipoRol rolDestinatario) {
+    public List<MensajeDTO> obtenerMensajesDelDia(Rol.TipoRol rolDestinatario, Rol.TipoRol rolUsuario) {
         LocalDate hoy = LocalDate.now();
         List<Mensaje> mensajes = mensajeRepository.findByFechaDiaOrderByFechaCreacionAsc(hoy);
         
         // Filtrar mensajes donde el usuario es destinatario o remitente
+        // Si el usuario es de depósito, también incluir mensajes donde es remitente aunque el destinatario sea otro rol de depósito
         return mensajes.stream()
-                .filter(m -> m.getRolDestinatario().equals(rolDestinatario) || 
-                           m.getRemitente().getRol().getNombre().equals(rolDestinatario))
+                .filter(m -> {
+                    boolean esDestinatario = m.getRolDestinatario().equals(rolDestinatario);
+                    boolean esRemitente = m.getRemitente().getRol().getNombre().equals(rolUsuario);
+                    // También incluir si el remitente es de depósito y el destinatario es de depósito (para compatibilidad)
+                    boolean esRemitenteDeposito = (m.getRemitente().getRol().getNombre() == Rol.TipoRol.ADMIN_DEPOSITO || 
+                                                   m.getRemitente().getRol().getNombre() == Rol.TipoRol.PLANILLERO || 
+                                                   m.getRemitente().getRol().getNombre() == Rol.TipoRol.CONTROL) &&
+                                                  (rolDestinatario == Rol.TipoRol.ADMIN_DEPOSITO || 
+                                                   rolDestinatario == Rol.TipoRol.PLANILLERO || 
+                                                   rolDestinatario == Rol.TipoRol.CONTROL);
+                    return esDestinatario || esRemitente || (esRemitenteDeposito && m.getRolDestinatario() == Rol.TipoRol.ADMIN_DEPOSITO);
+                })
                 .map(this::convertirADTO)
                 .collect(Collectors.toList());
     }
@@ -64,7 +75,14 @@ public class MensajeService {
                 .orElseThrow(() -> new IllegalArgumentException("Mensaje no encontrado"));
 
         // Solo el destinatario puede marcar como leído
-        if (mensaje.getRolDestinatario().equals(rolUsuario) && !mensaje.getLeido()) {
+        // Si el destinatario es ADMIN_DEPOSITO, cualquier rol de depósito puede marcar como leído
+        boolean puedeMarcar = mensaje.getRolDestinatario().equals(rolUsuario);
+        if (mensaje.getRolDestinatario() == Rol.TipoRol.ADMIN_DEPOSITO && 
+            (rolUsuario == Rol.TipoRol.ADMIN_DEPOSITO || rolUsuario == Rol.TipoRol.PLANILLERO || rolUsuario == Rol.TipoRol.CONTROL)) {
+            puedeMarcar = true;
+        }
+        
+        if (puedeMarcar && !mensaje.getLeido()) {
             mensaje.setLeido(true);
             mensajeRepository.save(mensaje);
             

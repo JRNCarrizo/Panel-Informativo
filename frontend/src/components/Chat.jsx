@@ -16,10 +16,15 @@ const Chat = ({ onClose, rolDestinatario }) => {
   const chatContainerRef = useRef(null);
   const stompClientRef = useRef(null);
 
-  const rolUsuario = user?.rol; // ADMIN o DEPOSITO
+  const rolUsuario = user?.rol; // ADMIN_PRINCIPAL, ADMIN_DEPOSITO, PLANILLERO, CONTROL
 
-  // Determinar el rol destinatario (el opuesto al actual)
-  const destinoRol = rolDestinatario || (rolUsuario === 'ADMIN' ? 'DEPOSITO' : 'ADMIN');
+  // Determinar el rol destinatario
+  // Si viene como prop, usarlo. Si no, determinar según el rol del usuario:
+  // ADMIN_PRINCIPAL -> ADMIN_DEPOSITO (para que todos los del depósito vean los mensajes)
+  // Cualquier rol de depósito -> ADMIN_PRINCIPAL
+  const destinoRol = rolDestinatario || (
+    rolUsuario === 'ADMIN_PRINCIPAL' ? 'ADMIN_DEPOSITO' : 'ADMIN_PRINCIPAL'
+  );
 
   // Función para obtener la URL base del backend
   const getBackendBaseUrl = () => {
@@ -310,7 +315,7 @@ const Chat = ({ onClose, rolDestinatario }) => {
   }, []);
 
   // Determinar la clase CSS según el rol del usuario para aplicar colores
-  const isAdminChat = rolUsuario === 'ADMIN';
+  const isAdminChat = rolUsuario === 'ADMIN_PRINCIPAL';
   
   return (
     <div className={`chat-container ${isAdminChat ? 'chat-admin' : 'chat-deposito'}`}>
@@ -325,7 +330,7 @@ const Chat = ({ onClose, rolDestinatario }) => {
               objectFit: 'contain'
             }}
           />
-          <h3>Chat - {destinoRol === 'ADMIN' ? 'Administración' : 'Depósito'}</h3>
+          <h3>Chat - {destinoRol === 'ADMIN_PRINCIPAL' ? 'Administración' : 'Depósito'}</h3>
         </div>
         <button onClick={onClose} className="chat-close-btn">✕</button>
       </div>
