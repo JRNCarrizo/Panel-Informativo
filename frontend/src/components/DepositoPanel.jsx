@@ -3982,14 +3982,14 @@ const DepositoPanel = () => {
         </div>
         );
       })()}
-      {/* Componente Chat - Solo para ADMIN_DEPOSITO */}
-      {showChat && user?.rol !== 'CONTROL' && user?.rol !== 'PLANILLERO' && (
+      {/* Componente Chat - Solo para ADMIN_DEPOSITO y ADMIN_PRINCIPAL */}
+      {showChat && (user?.rol === 'ADMIN_DEPOSITO' || user?.rol === 'ADMIN_PRINCIPAL') && (
         <Chat 
           onClose={() => {
             setShowChat(false);
             actualizarCantidadMensajesNoLeidos();
           }}
-          rolDestinatario={user?.rol === 'ADMIN' ? 'DEPOSITO' : 'ADMIN'}
+          rolDestinatario={user?.rol === 'ADMIN_PRINCIPAL' ? 'ADMIN_DEPOSITO' : 'ADMIN_PRINCIPAL'}
         />
       )}
 

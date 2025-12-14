@@ -64,12 +64,14 @@ const Chat = ({ onClose, rolDestinatario }) => {
   };
 
   // Marcar mensajes no leídos como leídos cuando se abre el chat
+  // Solo marcar mensajes donde el usuario es el DESTINATARIO, no el remitente
+  // El backend se encarga de filtrar y enviar la notificación WebSocket que actualizará el estado
   const marcarMensajesComoLeidos = async () => {
     try {
       await mensajeService.marcarTodosComoLeidos();
+      // No actualizar el estado local aquí, la notificación WebSocket lo hará
+      // Esto evita condiciones de carrera y asegura que solo se marquen los mensajes correctos
       await actualizarCantidadNoLeidos();
-      // Actualizar estado local de mensajes
-      setMensajes(prev => prev.map(m => ({ ...m, leido: true })));
     } catch (error) {
       console.error('Error al marcar mensajes como leídos:', error);
     }
@@ -119,7 +121,16 @@ const Chat = ({ onClose, rolDestinatario }) => {
       console.error('Error al enviar mensaje:', error);
       // Remover el mensaje optimista en caso de error
       setMensajes(prev => prev.filter(m => m.id !== mensajeOptimista.id));
-      alert('Error al enviar el mensaje');
+      
+      // Mostrar mensaje de error más descriptivo
+      if (error.response?.status === 403) {
+        alert('No tienes permisos para enviar mensajes. Solo ADMIN_PRINCIPAL y ADMIN_DEPOSITO pueden usar el chat.');
+      } else if (error.response?.status === 401) {
+        alert('Tu sesión ha expirado. Por favor, recarga la página e inicia sesión nuevamente.');
+      } else {
+        alert('Error al enviar el mensaje. Por favor, intenta nuevamente.');
+      }
+      
       // Restaurar el mensaje si falla
       setNuevoMensaje(mensajeTexto);
     }
@@ -169,13 +180,15 @@ const Chat = ({ onClose, rolDestinatario }) => {
   const mensajesProcesadosRef = useRef(new Set());
 
   // Marcar mensajes no leídos como leídos cuando se agregan nuevos mensajes y el chat está abierto
+  // Solo marcar mensajes donde el usuario es el DESTINATARIO, no el remitente
   useEffect(() => {
     // Si hay mensajes no leídos que aún no han sido procesados, marcarlos como leídos
-    const mensajesNoLeidos = mensajes.filter(m => 
-      !m.leido && 
-      m.rolDestinatario === rolUsuario &&
-      !mensajesProcesadosRef.current.has(m.id)
-    );
+    // PERO solo si el usuario es el destinatario (no el remitente)
+    const mensajesNoLeidos = mensajes.filter(m => {
+      const esDestinatario = !m.leido && m.rolDestinatario === rolUsuario;
+      const esRemitente = String(m.remitenteId) === String(user?.id);
+      return esDestinatario && !esRemitente && !mensajesProcesadosRef.current.has(m.id);
+    });
     
     if (mensajesNoLeidos.length > 0) {
       // Marcar cada mensaje no leído como leído
@@ -187,7 +200,7 @@ const Chat = ({ onClose, rolDestinatario }) => {
         });
       });
     }
-  }, [mensajes, rolUsuario]);
+  }, [mensajes, rolUsuario, user?.id]);
 
   // Conectar WebSocket para mensajes en tiempo real
   useEffect(() => {
@@ -214,7 +227,10 @@ const Chat = ({ onClose, rolDestinatario }) => {
             return [...prev, nuevoMensaje];
           });
           // Si el chat está abierto, marcar el mensaje como leído automáticamente
-          if (nuevoMensaje.rolDestinatario === rolUsuario && !nuevoMensaje.leido) {
+          // PERO solo si el usuario es el destinatario (no el remitente)
+          const esDestinatario = nuevoMensaje.rolDestinatario === rolUsuario;
+          const esRemitente = String(nuevoMensaje.remitenteId) === String(user?.id);
+          if (esDestinatario && !esRemitente && !nuevoMensaje.leido) {
             mensajeService.marcarComoLeido(nuevoMensaje.id).catch(err => {
               console.error('Error al marcar mensaje como leído:', err);
             });
@@ -253,7 +269,10 @@ const Chat = ({ onClose, rolDestinatario }) => {
               return [...prev, nuevoMensaje];
             });
             // Si el chat está abierto, marcar el mensaje como leído automáticamente
-            if (!nuevoMensaje.leido) {
+            // PERO solo si el usuario es el destinatario (no el remitente)
+            const esDestinatario = nuevoMensaje.rolDestinatario === rolUsuario;
+            const esRemitente = String(nuevoMensaje.remitenteId) === String(user?.id);
+            if (esDestinatario && !esRemitente && !nuevoMensaje.leido) {
               mensajeService.marcarComoLeido(nuevoMensaje.id).catch(err => {
                 console.error('Error al marcar mensaje como leído:', err);
               });
@@ -269,8 +288,16 @@ const Chat = ({ onClose, rolDestinatario }) => {
         });
 
         client.subscribe(topicTodosLeidos, () => {
-          setMensajes(prev => prev.map(m => ({ ...m, leido: true })));
-          setCantidadNoLeidos(0);
+          // Solo marcar como leídos los mensajes donde el usuario es el DESTINATARIO, no el remitente
+          setMensajes(prev => prev.map(m => {
+            const esDestinatario = m.rolDestinatario === rolUsuario;
+            const esRemitente = String(m.remitenteId) === String(user?.id);
+            if (esDestinatario && !esRemitente) {
+              return { ...m, leido: true };
+            }
+            return m;
+          }));
+          actualizarCantidadNoLeidos();
         });
 
         // Suscribirse a notificaciones de mensajes leídos para el remitente

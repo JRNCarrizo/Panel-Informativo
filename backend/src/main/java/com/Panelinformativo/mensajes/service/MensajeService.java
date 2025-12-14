@@ -70,7 +70,7 @@ public class MensajeService {
     }
 
     @Transactional
-    public void marcarMensajeComoLeido(Long mensajeId, Rol.TipoRol rolUsuario) {
+    public void marcarMensajeComoLeido(Long mensajeId, Rol.TipoRol rolUsuario, Usuario usuarioActual) {
         Mensaje mensaje = mensajeRepository.findById(mensajeId)
                 .orElseThrow(() -> new IllegalArgumentException("Mensaje no encontrado"));
 
@@ -82,7 +82,10 @@ public class MensajeService {
             puedeMarcar = true;
         }
         
-        if (puedeMarcar && !mensaje.getLeido()) {
+        // IMPORTANTE: No permitir que el remitente marque su propio mensaje como leído
+        boolean esRemitente = mensaje.getRemitente().getId().equals(usuarioActual.getId());
+        
+        if (puedeMarcar && !esRemitente && !mensaje.getLeido()) {
             mensaje.setLeido(true);
             mensajeRepository.save(mensaje);
             
@@ -95,21 +98,30 @@ public class MensajeService {
     }
 
     @Transactional
-    public void marcarTodosComoLeidos(Rol.TipoRol rolDestinatario) {
+    public void marcarTodosComoLeidos(Rol.TipoRol rolDestinatario, Usuario usuarioActual) {
         LocalDate hoy = LocalDate.now();
         List<Mensaje> mensajesNoLeidos = mensajeRepository
                 .findByRolDestinatarioAndFechaDiaAndLeidoFalseOrderByFechaCreacionAsc(rolDestinatario, hoy);
         
-        mensajesNoLeidos.forEach(m -> m.setLeido(true));
-        mensajeRepository.saveAll(mensajesNoLeidos);
-        
-        // Convertir a DTOs para enviar a los remitentes
-        List<MensajeDTO> mensajesDTO = mensajesNoLeidos.stream()
-                .map(this::convertirADTO)
+        // Filtrar: solo marcar como leídos los mensajes donde el usuario actual NO es el remitente
+        // (es decir, solo los mensajes que el usuario recibió, no los que envió)
+        List<Mensaje> mensajesParaMarcar = mensajesNoLeidos.stream()
+                .filter(m -> !m.getRemitente().getId().equals(usuarioActual.getId()))
                 .collect(Collectors.toList());
         
-        // Notificar actualización vía WebSocket (tanto al destinatario como a los remitentes)
-        webSocketService.notificarMensajesLeidos(rolDestinatario, mensajesDTO);
+        // Solo procesar si hay mensajes para marcar
+        if (!mensajesParaMarcar.isEmpty()) {
+            mensajesParaMarcar.forEach(m -> m.setLeido(true));
+            mensajeRepository.saveAll(mensajesParaMarcar);
+            
+            // Convertir a DTOs para enviar a los remitentes
+            List<MensajeDTO> mensajesDTO = mensajesParaMarcar.stream()
+                    .map(this::convertirADTO)
+                    .collect(Collectors.toList());
+            
+            // Notificar actualización vía WebSocket (tanto al destinatario como a los remitentes)
+            webSocketService.notificarMensajesLeidos(rolDestinatario, mensajesDTO);
+        }
     }
 
     // Limpiar mensajes de días anteriores (ejecutar al inicio de cada día)

@@ -76,7 +76,7 @@ public class MensajeController {
         // El rol ya es ADMIN_PRINCIPAL o ADMIN_DEPOSITO, no necesita normalización
         Rol.TipoRol rolParaMensajes = rolUsuario;
         
-        mensajeService.marcarMensajeComoLeido(id, rolParaMensajes);
+        mensajeService.marcarMensajeComoLeido(id, rolParaMensajes, usuario);
         return ResponseEntity.ok().build();
     }
 
@@ -90,7 +90,7 @@ public class MensajeController {
         // El rol ya es ADMIN_PRINCIPAL o ADMIN_DEPOSITO, no necesita normalización
         Rol.TipoRol rolParaMensajes = rolUsuario;
         
-        mensajeService.marcarTodosComoLeidos(rolParaMensajes);
+        mensajeService.marcarTodosComoLeidos(rolParaMensajes, usuario);
         return ResponseEntity.ok().build();
     }
 }
