@@ -45,19 +45,19 @@ public class VueltaService {
     }
 
     public List<VueltaDTO> obtenerTodasLasVueltas() {
-        return vueltaRepository.findAllByOrderByNombreAsc().stream()
+        return vueltaRepository.findAllByOrderByIdAsc().stream()
                 .map(this::convertirADTO)
                 .collect(Collectors.toList());
     }
 
     public List<VueltaDTO> obtenerVueltasActivas() {
-        return vueltaRepository.findByActivoTrueOrderByNombreAsc().stream()
+        return vueltaRepository.findByActivoTrueOrderByIdAsc().stream()
                 .map(this::convertirADTO)
                 .collect(Collectors.toList());
     }
 
     public List<VueltaDTO> buscarVueltas(String busqueda) {
-        return vueltaRepository.findByNombreContainingIgnoreCaseAndActivoTrueOrderByNombreAsc(busqueda).stream()
+        return vueltaRepository.findByNombreContainingIgnoreCaseAndActivoTrueOrderByIdAsc(busqueda).stream()
                 .map(this::convertirADTO)
                 .collect(Collectors.toList());
     }

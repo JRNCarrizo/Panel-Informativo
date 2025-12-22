@@ -135,6 +135,7 @@ public class PedidoService {
             pedido.setOrdenPrioridadCarga(null);
             pedido.setControlado(false); // Limpiar cuando se realiza
             pedido.setFinalizadoPor(usuario.getNombreCompleto()); // Guardar quién finalizó
+            pedido.setFechaFinalizado(LocalDateTime.now()); // Guardar fecha cuando se finaliza
         }
         
         // Si vuelve a PENDIENTE desde EN_PREPARACION, solo limpiar la etapa de preparación
@@ -142,12 +143,18 @@ public class PedidoService {
         // Si NO tiene ordenPrioridadCarga (porque se limpió al pasar a EN_PREPARACION), asignarle uno nuevo
         if (nuevoEstado == Pedido.EstadoPedido.PENDIENTE && estadoAnterior == Pedido.EstadoPedido.EN_PREPARACION) {
             pedido.setEtapaPreparacion(null);
+            pedido.setFechaPreparacion(null); // Limpiar fecha de preparación
+            pedido.setFechaControl(null); // Limpiar fecha de control
             pedido.setFechaPendienteCarga(null);
             pedido.setControlado(false); // Limpiar cuando vuelve a pendiente
             // Si no tiene ordenPrioridadCarga, asignarle uno nuevo al final de la cola
             if (pedido.getOrdenPrioridadCarga() == null) {
                 Integer maxOrden = pedidoRepository.findMaxOrdenPrioridadCarga();
                 pedido.setOrdenPrioridadCarga(maxOrden != null ? maxOrden + 1 : 1);
+                // Guardar la fecha de entrada a la cola de prioridad (solo si es null, primera vez)
+                if (pedido.getFechaEntradaColaPrioridad() == null) {
+                    pedido.setFechaEntradaColaPrioridad(LocalDateTime.now());
+                }
             }
             // Si ya tiene ordenPrioridadCarga, mantenerlo para que vuelva a la misma posición
         }
@@ -155,6 +162,7 @@ public class PedidoService {
         // Si pasa a EN_PREPARACION desde PENDIENTE y es un PLANILLERO, asignar automáticamente el grupo
         if (nuevoEstado == Pedido.EstadoPedido.EN_PREPARACION && estadoAnterior == Pedido.EstadoPedido.PENDIENTE) {
             pedido.setOrdenPrioridadCarga(null); // Limpiar el orden de prioridad de carga (ya no está en la cola)
+            pedido.setFechaPreparacion(LocalDateTime.now()); // Guardar fecha cuando pasa a EN_PREPARACION
             
             // Si el usuario tiene rol PLANILLERO y no hay grupo asignado, asignar automáticamente
             if (usuario.getRol().getNombre() == com.Panelinformativo.usuarios.model.Rol.TipoRol.PLANILLERO 
@@ -191,6 +199,7 @@ public class PedidoService {
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.CONTROL);
             pedido.setControlado(false);
             pedido.setControladoPor(null); // Limpiar cuando pasa a CONTROL
+            pedido.setFechaControl(LocalDateTime.now()); // Guardar fecha cuando pasa a CONTROL
         } else if (pedido.getEtapaPreparacion() == Pedido.EtapaPreparacion.CONTROL) {
             // Cuando pasa a PENDIENTE_CARGA desde CONTROL, establecer como controlado y guardar quién hizo el control
             pedido.setEtapaPreparacion(Pedido.EtapaPreparacion.PENDIENTE_CARGA);
@@ -203,6 +212,7 @@ public class PedidoService {
             pedido.setControlado(false); // Limpiar cuando se realiza
             // NO limpiar controladoPor, mantenerlo para el historial
             pedido.setFinalizadoPor(usuario.getNombreCompleto()); // Guardar quién finalizó
+            pedido.setFechaFinalizado(LocalDateTime.now()); // Guardar fecha cuando se finaliza
         }
         
         pedido = pedidoRepository.save(pedido);
@@ -322,6 +332,10 @@ public class PedidoService {
                     .findFirst()
                     .orElseThrow(() -> new IllegalArgumentException("Pedido no encontrado: " + pedidoId));
             pedido.setOrdenPrioridadCarga(i + 1);
+            // Guardar la fecha de entrada a la cola de prioridad (solo si es null, primera vez)
+            if (pedido.getFechaEntradaColaPrioridad() == null) {
+                pedido.setFechaEntradaColaPrioridad(LocalDateTime.now());
+            }
         }
         
         pedidoRepository.saveAll(pedidos);
@@ -360,6 +374,10 @@ public class PedidoService {
         // Obtener el máximo orden y agregar al final
         Integer maxOrden = pedidoRepository.findMaxOrdenPrioridadCarga();
         pedido.setOrdenPrioridadCarga(maxOrden + 1);
+        // Guardar la fecha de entrada a la cola de prioridad (solo si es null, primera vez)
+        if (pedido.getFechaEntradaColaPrioridad() == null) {
+            pedido.setFechaEntradaColaPrioridad(LocalDateTime.now());
+        }
         pedido = pedidoRepository.save(pedido);
         
         return convertirADTO(pedido);
@@ -374,9 +392,13 @@ public class PedidoService {
         dto.setUsuarioCreadorNombre(pedido.getUsuarioCreador().getNombreCompleto());
         dto.setFechaCreacion(pedido.getFechaCreacion());
         dto.setFechaActualizacion(pedido.getFechaActualizacion());
+        dto.setFechaPreparacion(pedido.getFechaPreparacion());
+        dto.setFechaControl(pedido.getFechaControl());
         dto.setFechaPendienteCarga(pedido.getFechaPendienteCarga());
+        dto.setFechaFinalizado(pedido.getFechaFinalizado());
         dto.setFechaEntrega(pedido.getFechaEntrega());
         dto.setOrdenPrioridadCarga(pedido.getOrdenPrioridadCarga());
+        dto.setFechaEntradaColaPrioridad(pedido.getFechaEntradaColaPrioridad());
         dto.setControlado(pedido.getControlado());
         dto.setControladoPor(pedido.getControladoPor());
         dto.setFinalizadoPor(pedido.getFinalizadoPor());

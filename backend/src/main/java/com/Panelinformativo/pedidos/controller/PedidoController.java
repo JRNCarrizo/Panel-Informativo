@@ -143,9 +143,9 @@ public class PedidoController {
         }
     }
 
-    // Obtener pedidos pendientes sin orden de prioridad de carga (para Panel Depósito)
+    // Obtener pedidos pendientes sin orden de prioridad de carga (para Panel Administración y Depósito)
     @GetMapping("/pendientes/sin-orden")
-    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<List<PedidoDTO>> obtenerPedidosPendientesSinOrden() {
         return ResponseEntity.ok(pedidoService.obtenerPedidosPendientesSinOrden());
     }
@@ -158,7 +158,7 @@ public class PedidoController {
 
     // Actualizar el orden de prioridad de carga de múltiples pedidos
     @PutMapping("/prioridad-carga/orden")
-    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<?> actualizarOrdenPrioridadCarga(@RequestBody List<Long> pedidoIds) {
         try {
             List<PedidoDTO> pedidos = pedidoService.actualizarOrdenPrioridadCarga(pedidoIds);
@@ -172,7 +172,7 @@ public class PedidoController {
 
     // Remover un pedido de la cola de prioridad de carga
     @PutMapping("/{id}/prioridad-carga/remover")
-    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<?> removerDeColaPrioridadCarga(@PathVariable Long id) {
         try {
             PedidoDTO pedido = pedidoService.removerDeColaPrioridadCarga(id);
@@ -185,7 +185,7 @@ public class PedidoController {
 
     // Agregar un pedido a la cola de prioridad de carga (al final)
     @PutMapping("/{id}/prioridad-carga/agregar")
-    @PreAuthorize("hasRole('ADMIN_DEPOSITO')")
+    @PreAuthorize("hasAnyRole('ADMIN_PRINCIPAL', 'ADMIN_DEPOSITO')")
     public ResponseEntity<?> agregarAColaPrioridadCarga(@PathVariable Long id) {
         try {
             PedidoDTO pedido = pedidoService.agregarAColaPrioridadCarga(id);

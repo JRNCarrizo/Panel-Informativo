@@ -63,13 +63,25 @@ public class Pedido {
     private LocalDateTime fechaActualizacion;
     
     @Column(nullable = true)
+    private LocalDateTime fechaPreparacion; // Fecha cuando pasó a EN_PREPARACION
+    
+    @Column(nullable = true)
+    private LocalDateTime fechaControl; // Fecha cuando pasó a etapa CONTROL
+    
+    @Column(nullable = true)
     private LocalDateTime fechaPendienteCarga; // Fecha cuando pasó a PENDIENTE_CARGA
+    
+    @Column(nullable = true)
+    private LocalDateTime fechaFinalizado; // Fecha cuando se finalizó el pedido
 
     @Column(nullable = false)
     private LocalDate fechaEntrega = LocalDate.now(); // Fecha en que se ejecutará la vuelta (por defecto la fecha de creación)
 
     @Column(nullable = true)
     private Integer ordenPrioridadCarga; // Orden manual definido en Panel Depósito para la cola de prioridad de carga
+    
+    @Column(nullable = true)
+    private LocalDateTime fechaEntradaColaPrioridad; // Fecha cuando ingresó a la cola de prioridad de carga
 
     @Column(nullable = false)
     private Boolean controlado = false; // Indica si el pedido ha sido controlado cuando está en etapa CONTROL

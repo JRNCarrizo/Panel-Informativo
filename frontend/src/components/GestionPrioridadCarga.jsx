@@ -12,29 +12,11 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const [showModalDetalle, setShowModalDetalle] = useState(false);
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
-  const [showModalPlanillasDelDia, setShowModalPlanillasDelDia] = useState(false);
-  const [planillasDelDia, setPlanillasDelDia] = useState([]);
-  const [loadingPlanillasDelDia, setLoadingPlanillasDelDia] = useState(false);
-  const [cantidadPlanillasDelDia, setCantidadPlanillasDelDia] = useState(0);
-  const [showModalTransportistas, setShowModalTransportistas] = useState(false);
-  const [transportistasVueltas, setTransportistasVueltas] = useState([]);
-  const [loadingTransportistas, setLoadingTransportistas] = useState(false);
-  const [fechasExpandidas, setFechasExpandidas] = useState(new Set());
   // Ref para evitar recargas cuando el cambio viene de esta misma sesión
   const actualizacionesLocales = useRef(new Set());
 
-  const cargarCantidadPlanillasDelDia = async () => {
-    try {
-      const response = await pedidoService.obtenerPlanillasDelDia();
-      setCantidadPlanillasDelDia((response.data || []).length);
-    } catch (err) {
-      console.error('Error al cargar cantidad de planillas del día:', err);
-    }
-  };
-
   useEffect(() => {
     cargarPedidos(true); // Solo mostrar loading en la carga inicial
-    cargarCantidadPlanillasDelDia(); // Cargar cantidad de planillas del día
     
     const stompClient = connectWebSocket((message) => {
       // Verificar si este cambio viene de una actualización local
@@ -91,13 +73,9 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
         setTimeout(() => {
           if (!actualizacionesLocales.current.size) {
             cargarPedidos();
-            cargarCantidadPlanillasDelDia(); // Actualizar contador también
           }
         }, 500);
       }
-      
-      // Siempre actualizar el contador de planillas del día cuando hay cambios
-      cargarCantidadPlanillasDelDia();
     });
 
     return () => {
@@ -400,63 +378,6 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
     setPedidoSeleccionado(null);
   };
 
-  const abrirModalPlanillasDelDia = async () => {
-    setShowModalPlanillasDelDia(true);
-    setLoadingPlanillasDelDia(true);
-    try {
-      const response = await pedidoService.obtenerPlanillasDelDia();
-      const planillas = response.data || [];
-      setPlanillasDelDia(planillas);
-      setCantidadPlanillasDelDia(planillas.length); // Actualizar el contador también
-    } catch (err) {
-      console.error('Error al cargar planillas del día:', err);
-      setError('Error al cargar las planillas del día');
-    } finally {
-      setLoadingPlanillasDelDia(false);
-    }
-  };
-
-  const cerrarModalPlanillasDelDia = () => {
-    setShowModalPlanillasDelDia(false);
-    setPlanillasDelDia([]);
-  };
-
-  const abrirModalTransportistas = async () => {
-    setShowModalTransportistas(true);
-    setLoadingTransportistas(true);
-    try {
-      const response = await pedidoService.obtenerTransportistasVueltasDelDia();
-      setTransportistasVueltas(response.data || []);
-      
-      // Expandir automáticamente la fecha actual
-      const hoy = new Date().toISOString().split('T')[0];
-      setFechasExpandidas(new Set([hoy]));
-    } catch (err) {
-      console.error('Error al cargar transportistas y vueltas:', err);
-      setError('Error al cargar los transportistas y vueltas');
-    } finally {
-      setLoadingTransportistas(false);
-    }
-  };
-
-  const cerrarModalTransportistas = () => {
-    setShowModalTransportistas(false);
-    setTransportistasVueltas([]);
-    setFechasExpandidas(new Set());
-  };
-
-  const toggleFechaExpandida = (fecha) => {
-    setFechasExpandidas(prev => {
-      const nuevo = new Set(prev);
-      if (nuevo.has(fecha)) {
-        nuevo.delete(fecha);
-      } else {
-        nuevo.add(fecha);
-      }
-      return nuevo;
-    });
-  };
-
   const getEstadoTexto = (pedido) => {
     if (pedido.estado === 'REALIZADO') {
       return 'Finalizado';
@@ -532,6 +453,7 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
     return null;
   };
 
+
   if (loading) {
     return (
       <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -558,71 +480,16 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
         {/* Columna izquierda: Pedidos sin orden */}
         <div className="pedidos-sin-orden">
           <h2 className="seccion-titulo">
-            Planillas Recibidas
+            Planillas Creadas
             <span className="contador-badge">{pedidosSinOrden.length}</span>
           </h2>
           <p className="seccion-descripcion">
-            Planillas recibidas que aún no están en la cola de prioridad. 
+            Planillas creadas que aún no están en la cola de prioridad. 
             Agrega las que quieras mostrar en la pantalla pública.
           </p>
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
-            <button
-              onClick={abrirModalPlanillasDelDia}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#6366f1',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                position: 'relative',
-              }}
-            >
-              📋 Ver Planillas del Día
-              {cantidadPlanillasDelDia > 0 && (
-                <span
-                  style={{
-                    backgroundColor: '#ffffff',
-                    color: '#6366f1',
-                    borderRadius: '12px',
-                    padding: '2px 8px',
-                    fontSize: '0.75rem',
-                    fontWeight: '700',
-                    minWidth: '20px',
-                    textAlign: 'center',
-                  }}
-                >
-                  {cantidadPlanillasDelDia}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={abrirModalTransportistas}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#10b981',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}
-            >
-              🚚 Ver Transportes y Vueltas
-            </button>
-          </div>
           <div className="pedidos-lista">
             {pedidosSinOrden.length === 0 ? (
-              <div className="sin-pedidos">No hay planillas recibidas</div>
+              <div className="sin-pedidos">No hay planillas creadas</div>
             ) : (
               pedidosSinOrden.map((pedido) => (
                 <div key={pedido.id} className="pedido-item-sin-orden">
@@ -858,21 +725,12 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
                       gap: '8px',
                       flexWrap: 'wrap'
                     }}>
-                      <span>🕐 {pedidoSeleccionado.fechaCreacion && new Date(pedidoSeleccionado.fechaCreacion).toLocaleTimeString('es-AR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })}</span>
-                      {getFechaEntregaTexto(pedidoSeleccionado) && (
-                        <span style={{ 
-                          fontWeight: '600', 
-                          color: '#2563eb',
-                          backgroundColor: '#eff6ff',
-                          padding: '2px 8px',
-                          borderRadius: '4px'
-                        }}>
-                          📅 {getFechaEntregaTexto(pedidoSeleccionado)}
-                        </span>
+                      {pedidoSeleccionado.fechaEntradaColaPrioridad && (
+                        <span>🕐 {new Date(pedidoSeleccionado.fechaEntradaColaPrioridad).toLocaleTimeString('es-AR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}</span>
                       )}
                     </div>
                   </div>
@@ -930,6 +788,33 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
                     <div className="info-label">👥 Equipo</div>
                     <div className="info-value">{pedidoSeleccionado.grupoNombre || 'Sin asignar'}</div>
                   </div>
+                  {pedidoSeleccionado.fechaEntrega && (
+                    <div className="info-item">
+                      <div className="info-label">📅 Despacho</div>
+                      <div className="info-value">
+                        {(() => {
+                          const hoy = new Date();
+                          hoy.setHours(0, 0, 0, 0);
+                          const fechaEntrega = parseFechaLocal(pedidoSeleccionado.fechaEntrega);
+                          if (!fechaEntrega) return 'Fecha inválida';
+                          fechaEntrega.setHours(0, 0, 0, 0);
+                          const diffTime = fechaEntrega - hoy;
+                          const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                          
+                          if (diffDays === 0) {
+                            return 'Sale hoy';
+                          } else if (diffDays === 1) {
+                            return 'Sale mañana';
+                          } else {
+                            const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                            const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                            const year = String(fechaEntrega.getFullYear()).slice(-2);
+                            return `Sale ${day}/${month}/${year}`;
+                          }
+                        })()}
+                      </div>
+                    </div>
+                  )}
                   <div className="info-item">
                     <div className="info-label">📋 Estado</div>
                     <span
@@ -941,66 +826,190 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
                   </div>
                 </div>
 
-                {pedidoSeleccionado.fechaEntrega && (
-                  <div className="info-item" style={{ marginBottom: '16px' }}>
-                    <div className="info-label">📅 Fecha de Despacho</div>
-                    <div className="info-value">
-                      {(() => {
-                        const hoy = new Date();
-                        hoy.setHours(0, 0, 0, 0);
-                        const fechaEntrega = parseFechaLocal(pedidoSeleccionado.fechaEntrega);
-                        if (!fechaEntrega) return 'Fecha inválida';
-                        fechaEntrega.setHours(0, 0, 0, 0);
-                        const diffTime = fechaEntrega - hoy;
-                        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                        
-                        if (diffDays === 0) {
-                          return 'Hoy';
-                        } else if (diffDays === 1) {
-                          return 'Mañana';
-                        } else {
-                          return fechaEntrega.toLocaleDateString('es-AR', {
-                            weekday: 'long',
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric'
-                          });
-                        }
-                      })()}
-                    </div>
-                  </div>
-                )}
-
-                {pedidoSeleccionado.estado === 'REALIZADO' && pedidoSeleccionado.fechaActualizacion && (
+                {/* Timestamps de etapas */}
+                {(pedidoSeleccionado.fechaPreparacion || pedidoSeleccionado.fechaControl || pedidoSeleccionado.fechaPendienteCarga || pedidoSeleccionado.fechaFinalizado) && (
                   <div style={{
-                    padding: '12px',
-                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                    borderRadius: '8px',
-                    border: '1px solid #86efac',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
                     marginTop: '8px'
                   }}>
-                    <div style={{
-                      fontSize: '0.85rem',
-                      fontWeight: '600',
-                      color: '#166534',
-                      marginBottom: '4px'
-                    }}>
-                      ✅ Finalizado
-                    </div>
-                    <div style={{
-                      fontSize: '0.9rem',
-                      color: '#15803d',
-                      fontWeight: '500'
-                    }}>
-                      {new Date(pedidoSeleccionado.fechaActualizacion).toLocaleString('es-AR', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })}
-                    </div>
+                    {/* Primera fila: Preparación y Control */}
+                    {(pedidoSeleccionado.fechaPreparacion || pedidoSeleccionado.fechaControl) && (
+                      <div style={{
+                        display: 'flex',
+                        gap: '12px'
+                      }}>
+                        {pedidoSeleccionado.fechaPreparacion && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #90caf9'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#1565c0',
+                              marginBottom: '4px'
+                            }}>
+                              ⏰ Preparación
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#1976d2',
+                              fontWeight: '500'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaPreparacion).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {pedidoSeleccionado.fechaControl && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #fff9c4 0%, #fff59d 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #fff176'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#f57f17',
+                              marginBottom: '4px'
+                            }}>
+                              🔍 Control
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#f9a825',
+                              fontWeight: '500'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaControl).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {!pedidoSeleccionado.fechaPreparacion && pedidoSeleccionado.fechaControl && (
+                          <div style={{ flex: 1 }}></div>
+                        )}
+                      </div>
+                    )}
+                    {/* Segunda fila: Pendiente de Carga y Finalizado */}
+                    {(pedidoSeleccionado.fechaPendienteCarga || pedidoSeleccionado.fechaFinalizado) && (
+                      <div style={{
+                        display: 'flex',
+                        gap: '12px'
+                      }}>
+                        {pedidoSeleccionado.fechaPendienteCarga && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #ffb74d'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#E65100',
+                              marginBottom: '4px'
+                            }}>
+                              ✅ Pendiente de Carga
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#F57C00',
+                              fontWeight: '500',
+                              marginBottom: '4px'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaPendienteCarga).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                            {pedidoSeleccionado.controladoPor && (
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                color: '#E65100',
+                                fontWeight: '500',
+                                marginTop: '4px',
+                                paddingTop: '4px',
+                                borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                              }}>
+                                <strong>Controlado por:</strong> {pedidoSeleccionado.controladoPor}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {pedidoSeleccionado.fechaFinalizado && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #86efac'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#166534',
+                              marginBottom: '4px'
+                            }}>
+                              ✅ Finalizado
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#15803d',
+                              fontWeight: '500',
+                              marginBottom: '4px'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaFinalizado).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                            {pedidoSeleccionado.finalizadoPor && (
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                color: '#15803d',
+                                fontWeight: '500',
+                                marginTop: '4px',
+                                paddingTop: '4px',
+                                borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                              }}>
+                                <strong>Finalizado por:</strong> {pedidoSeleccionado.finalizadoPor}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!pedidoSeleccionado.fechaPendienteCarga && pedidoSeleccionado.fechaFinalizado && (
+                          <div style={{ flex: 1 }}></div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1026,550 +1035,8 @@ const GestionPrioridadCarga = ({ onContadorCambio, onPedidoAgregadoACola, onPedi
           </div>
         </div>
       )}
-
-      {/* Modal de Planillas del Día */}
-      {showModalPlanillasDelDia && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-          }}
-          onClick={cerrarModalPlanillasDelDia}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              borderRadius: '12px',
-              padding: '24px',
-              maxWidth: '900px',
-              width: '90%',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '700', color: '#1e293b' }}>
-                📋 Planillas Recibidas del Día
-              </h2>
-              <button
-                onClick={cerrarModalPlanillasDelDia}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '24px',
-                  cursor: 'pointer',
-                  color: '#666',
-                  padding: '0',
-                  width: '32px',
-                  height: '32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {loadingPlanillasDelDia ? (
-              <div style={{ textAlign: 'center', padding: '40px' }}>
-                <p>Cargando planillas del día...</p>
-              </div>
-            ) : planillasDelDia.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-                <p>No hay planillas recibidas hoy</p>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {planillasDelDia.map((pedido) => (
-                  <div
-                    key={pedido.id}
-                    style={{
-                      background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
-                      border: '2px solid #e2e8f0',
-                      borderRadius: '12px',
-                      padding: '18px 24px',
-                      display: 'flex',
-                      gap: '20px',
-                      alignItems: 'center',
-                      position: 'relative',
-                      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04)',
-                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                      cursor: 'pointer',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = 'translateX(4px)';
-                      e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08)';
-                      e.currentTarget.style.borderColor = '#6366f1';
-                      e.currentTarget.style.background = 'linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.transform = 'translateX(0)';
-                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04)';
-                      e.currentTarget.style.borderColor = '#e2e8f0';
-                      e.currentTarget.style.background = 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)';
-                    }}
-                    onClick={() => {
-                      cerrarModalPlanillasDelDia();
-                      abrirModalDetalle(pedido);
-                    }}
-                  >
-                    {/* Icono de planilla */}
-                    <div style={{
-                      width: '56px',
-                      height: '56px',
-                      borderRadius: '12px',
-                      background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '1.8rem',
-                      color: 'white',
-                      fontWeight: '700',
-                      boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
-                      flexShrink: 0
-                    }}>
-                      📋
-                    </div>
-
-                    {/* Información principal */}
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
-                      {/* Header con número de planilla y estado */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
-                          <h3 style={{ 
-                            margin: 0, 
-                            fontSize: '1.3rem', 
-                            fontWeight: '700', 
-                            color: '#1e293b',
-                            letterSpacing: '-0.02em'
-                          }}>
-                            {pedido.numeroPlanilla}
-                          </h3>
-                          {pedido.fechaCreacion && (
-                            <div style={{ 
-                              fontSize: '0.85rem', 
-                              color: '#64748b', 
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              whiteSpace: 'nowrap'
-                            }}>
-                              🕐 {new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                hour12: false,
-                              })}
-                            </div>
-                          )}
-                        </div>
-                        <span
-                          style={{
-                            backgroundColor: getEstadoColor(pedido),
-                            color: 'white',
-                            padding: '6px 14px',
-                            borderRadius: '8px',
-                            fontSize: '0.8rem',
-                            fontWeight: '700',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                            boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
-                            whiteSpace: 'nowrap',
-                            flexShrink: 0
-                          }}
-                        >
-                          {getEstadoTexto(pedido)}
-                        </span>
-                      </div>
-
-                      {/* Detalles en una línea */}
-                      <div style={{ 
-                        display: 'flex', 
-                        flexWrap: 'wrap',
-                        gap: '16px',
-                        alignItems: 'center',
-                        fontSize: '0.9rem',
-                        color: '#475569'
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '1rem' }}>🚚</span>
-                          <span style={{ fontWeight: '600', color: '#1e293b' }}>
-                            {pedido.transportistaNombre || pedido.transportista || 'Sin transporte'}
-                          </span>
-                        </div>
-                        
-                        {pedido.vueltaNombre && (
-                          <>
-                            <span style={{ color: '#cbd5e1' }}>•</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: '1rem' }}>🔄</span>
-                              <span style={{ fontWeight: '600', color: '#1e293b' }}>
-                                {pedido.vueltaNombre}
-                              </span>
-                            </div>
-                          </>
-                        )}
-
-                        {getFechaEntregaTexto(pedido) && (
-                          <>
-                            <span style={{ color: '#cbd5e1' }}>•</span>
-                            <div style={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              gap: '6px',
-                              padding: '4px 10px',
-                              background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-                              borderRadius: '6px',
-                              border: '1px solid #93c5fd'
-                            }}>
-                              <span style={{ fontSize: '1rem' }}>📅</span>
-                              <span style={{ fontWeight: '700', color: '#1e40af', fontSize: '0.85rem' }}>
-                                {getFechaEntregaTexto(pedido)}
-                              </span>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Botón de acción */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cerrarModalPlanillasDelDia();
-                        abrirModalDetalle(pedido);
-                      }}
-                      style={{
-                        padding: '10px 20px',
-                        backgroundColor: '#6366f1',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        fontSize: '0.9rem',
-                        fontWeight: '700',
-                        transition: 'all 0.2s',
-                        boxShadow: '0 2px 4px rgba(99, 102, 241, 0.3)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '8px',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0
-                      }}
-                      onMouseEnter={(e) => {
-                        e.target.style.backgroundColor = '#4f46e5';
-                        e.target.style.transform = 'scale(1.05)';
-                        e.target.style.boxShadow = '0 4px 8px rgba(99, 102, 241, 0.4)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.backgroundColor = '#6366f1';
-                        e.target.style.transform = 'scale(1)';
-                        e.target.style.boxShadow = '0 2px 4px rgba(99, 102, 241, 0.3)';
-                      }}
-                    >
-                      <span>👁️</span>
-                      <span>Ver</span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Modal de Transportistas y Vueltas */}
-      {showModalTransportistas && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-          }}
-          onClick={cerrarModalTransportistas}
-        >
-          <div
-            style={{
-              backgroundColor: '#e5e7eb',
-              borderRadius: '12px',
-              padding: '24px',
-              maxWidth: '900px',
-              width: '90%',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '700', color: '#1e293b' }}>
-                🚚 Transportes y Vueltas del Día
-              </h2>
-              <button
-                onClick={cerrarModalTransportistas}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '24px',
-                  cursor: 'pointer',
-                  color: '#666',
-                  padding: '0',
-                  width: '32px',
-                  height: '32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {loadingTransportistas ? (
-              <div style={{ textAlign: 'center', padding: '40px' }}>
-                <p>Cargando transportes...</p>
-              </div>
-            ) : transportistasVueltas.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-                <p>No hay transportes activos</p>
-              </div>
-            ) : (() => {
-              // Agrupar transportistas por fecha de entrega
-              const hoy = new Date().toISOString().split('T')[0];
-              const fechasConDatos = new Set();
-              
-              // Recopilar todas las fechas que tienen vueltas asignadas
-              transportistasVueltas.forEach(item => {
-                if (item.vueltasPorFecha) {
-                  Object.keys(item.vueltasPorFecha).forEach(fecha => {
-                    if (item.vueltasPorFecha[fecha] && item.vueltasPorFecha[fecha].length > 0) {
-                      fechasConDatos.add(fecha);
-                    }
-                  });
-                }
-              });
-              
-              // Agregar también la fecha de hoy si no tiene vueltas pero queremos mostrarla
-              fechasConDatos.add(hoy);
-              
-              // Ordenar fechas: hoy primero, luego por fecha descendente (más recientes primero)
-              const fechasOrdenadas = Array.from(fechasConDatos).sort((a, b) => {
-                if (a === hoy) return -1;
-                if (b === hoy) return 1;
-                return b.localeCompare(a); // Descendente: más recientes primero
-              });
-              
-              const estaExpandida = (fecha) => fechasExpandidas.has(fecha);
-              
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {fechasOrdenadas.map((fecha) => {
-                    const esHoy = fecha === hoy;
-                    const expandida = estaExpandida(fecha);
-                    const fechaFormateada = esHoy 
-                      ? 'Hoy' 
-                      : new Date(fecha + 'T00:00:00').toLocaleDateString('es-AR', { 
-                          weekday: 'long', 
-                          day: 'numeric', 
-                          month: 'long',
-                          year: 'numeric'
-                        });
-                    
-                    // Separar transportistas: con vueltas en esta fecha y sin vueltas en esta fecha
-                    const transportistasConVueltasEnFecha = transportistasVueltas.filter(item => 
-                      item.vueltasPorFecha && 
-                      item.vueltasPorFecha[fecha] && 
-                      item.vueltasPorFecha[fecha].length > 0
-                    );
-                    
-                    // Transportistas sin vueltas en esta fecha específica
-                    const transportistasSinVueltasEnFecha = transportistasVueltas.filter(item => 
-                      !item.vueltasPorFecha || 
-                      !item.vueltasPorFecha[fecha] || 
-                      item.vueltasPorFecha[fecha].length === 0
-                    );
-                    
-                    return (
-                      <div key={fecha} style={{ 
-                        border: '2px solid #d1d5db', 
-                        borderRadius: '8px', 
-                        overflow: 'hidden',
-                        backgroundColor: 'white',
-                        boxShadow: esHoy && expandida ? '0 2px 8px rgba(33, 150, 243, 0.15)' : '0 1px 3px rgba(0, 0, 0, 0.1)'
-                      }}>
-                        {/* Encabezado de fecha (clic para expandir/colapsar) */}
-                        <div 
-                          onClick={() => toggleFechaExpandida(fecha)}
-                          style={{
-                            padding: '12px 16px',
-                            backgroundColor: esHoy ? '#E3F2FD' : '#f9fafb',
-                            borderBottom: expandida ? `2px solid ${esHoy ? '#2196F3' : '#e5e7eb'}` : 'none',
-                            fontWeight: '700',
-                            fontSize: '1rem',
-                            color: esHoy ? '#1976D2' : '#1e293b',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            transition: 'background-color 0.2s',
-                            userSelect: 'none'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = esHoy ? '#BBDEFB' : '#f3f4f6';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = esHoy ? '#E3F2FD' : '#f9fafb';
-                          }}
-                        >
-                          <span>
-                            {esHoy ? '📅 ' : '📆 '}{fechaFormateada}
-                            <span style={{ 
-                              marginLeft: '12px', 
-                              fontSize: '0.85rem', 
-                              fontWeight: '500',
-                              color: '#6b7280' 
-                            }}>
-                              ({transportistasConVueltasEnFecha.length} con vueltas, {transportistasSinVueltasEnFecha.length} sin vueltas)
-                            </span>
-                          </span>
-                          <span style={{ fontSize: '1.2rem', transition: 'transform 0.2s', transform: expandida ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-                            ▼
-                          </span>
-                        </div>
-                        
-                        {/* Contenido expandible */}
-                        {expandida && (
-                          <div>
-                            {/* Transportistas SIN vueltas asignadas */}
-                            {transportistasSinVueltasEnFecha.length > 0 && (
-                              <div style={{ marginBottom: '16px' }}>
-                                <div style={{
-                                  padding: '10px 16px',
-                                  backgroundColor: '#fef2f2',
-                                  borderBottom: '1px solid #fecaca',
-                                  fontWeight: '600',
-                                  fontSize: '0.9rem',
-                                  color: '#991b1b'
-                                }}>
-                                  ⚠️ Transportes sin Vueltas Asignadas ({transportistasSinVueltasEnFecha.length})
-                                </div>
-                                <div style={{ padding: '12px 16px' }}>
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                                    {transportistasSinVueltasEnFecha.map((item) => (
-                                      <span
-                                        key={item.transportistaId}
-                                        style={{
-                                          padding: '6px 12px',
-                                          backgroundColor: '#f3f4f6',
-                                          color: '#6b7280',
-                                          borderRadius: '4px',
-                                          fontSize: '0.85rem',
-                                          fontWeight: '500',
-                                        }}
-                                      >
-                                        {item.transportistaNombre}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Transportistas CON vueltas asignadas */}
-                            {transportistasConVueltasEnFecha.length > 0 && (
-                              <div>
-                                <div style={{
-                                  padding: '10px 16px',
-                                  backgroundColor: '#f0fdf4',
-                                  borderBottom: '1px solid #d1fae5',
-                                  fontWeight: '600',
-                                  fontSize: '0.9rem',
-                                  color: '#166534'
-                                }}>
-                                  ✅ Transportes con Vueltas Asignadas ({transportistasConVueltasEnFecha.length})
-                                </div>
-                                <div style={{ overflowX: 'auto' }}>
-                                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-                                    <thead>
-                                      <tr style={{ borderBottom: '2px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontWeight: '700', color: '#1e293b' }}>
-                                          Transporte
-                                        </th>
-                                        <th style={{ padding: '12px', textAlign: 'left', fontWeight: '700', color: '#1e293b' }}>
-                                          Vuelta Asignada
-                                        </th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {transportistasConVueltasEnFecha.map((item, index) => (
-                                        <tr
-                                          key={item.transportistaId}
-                                          style={{
-                                            borderBottom: '1px solid #e5e7eb',
-                                            backgroundColor: index % 2 === 0 ? '#ffffff' : '#f9fafb',
-                                          }}
-                                        >
-                                          <td style={{ padding: '12px', fontWeight: '600', color: '#1e293b' }}>
-                                            {item.transportistaNombre}
-                                          </td>
-                                          <td style={{ padding: '12px' }}>
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                              {item.vueltasPorFecha[fecha].map((vuelta, idx) => (
-                                                <span
-                                                  key={idx}
-                                                  style={{
-                                                    backgroundColor: esHoy ? '#10b981' : '#6b7280',
-                                                    color: 'white',
-                                                    padding: '4px 10px',
-                                                    borderRadius: '4px',
-                                                    fontSize: '0.85rem',
-                                                    fontWeight: '600',
-                                                  }}
-                                                >
-                                                  {vuelta}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 
 export default GestionPrioridadCarga;
-

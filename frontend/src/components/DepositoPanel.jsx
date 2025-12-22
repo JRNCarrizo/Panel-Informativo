@@ -9,7 +9,6 @@ import { connectWebSocket, disconnectWebSocket } from '../services/websocketServ
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 import Chat from './Chat';
-import GestionPrioridadCarga from './GestionPrioridadCarga';
 import './DepositoPanel.css';
 
 const DepositoPanel = () => {
@@ -17,11 +16,8 @@ const DepositoPanel = () => {
   const [pedidos, setPedidos] = useState([]);
   const [grupos, setGrupos] = useState([]);
   const [transportistas, setTransportistas] = useState([]);
-  // Estado inicial según el rol: PLANILLERO y CONTROL empiezan en PENDIENTE, otros en PRIORIDAD_CARGA
-  const [filtroEstado, setFiltroEstado] = useState(() => {
-    const savedUser = JSON.parse(localStorage.getItem('user') || '{}');
-    return (savedUser?.rol === 'PLANILLERO' || savedUser?.rol === 'CONTROL') ? 'PENDIENTE' : 'PRIORIDAD_CARGA';
-  }); // 'PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'TRANSPORTISTAS', 'ROLES'
+  // Estado inicial: todos empiezan en PENDIENTE
+  const [filtroEstado, setFiltroEstado] = useState('PENDIENTE'); // 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'TRANSPORTISTAS', 'ROLES'
   const [textoBusqueda, setTextoBusqueda] = useState(''); // Texto de búsqueda avanzada
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -51,8 +47,6 @@ const DepositoPanel = () => {
     PENDIENTE: [],
     EN_PREPARACION: [],
   });
-  // Estado para rastrear cantidad de planillas sin orden (para el indicador de Prioridad de Carga)
-  const [cantidadPlanillasSinOrden, setCantidadPlanillasSinOrden] = useState(0);
   // Estado para crear equipos (mantener para compatibilidad con otras secciones)
   const [showGrupoModal, setShowGrupoModal] = useState(false);
   const [grupoForm, setGrupoForm] = useState({ nombre: '' });
@@ -69,6 +63,7 @@ const DepositoPanel = () => {
   const [showResumenModal, setShowResumenModal] = useState(false);
   const [pedidosResumen, setPedidosResumen] = useState([]);
   const [fechaResumen, setFechaResumen] = useState('');
+  const [columnasResumenMinimizadas, setColumnasResumenMinimizadas] = useState(new Set());
   // Estado para el tooltip de equipos
   const [showEquipoTooltip, setShowEquipoTooltip] = useState(false);
   const [equipoTooltipPedidoId, setEquipoTooltipPedidoId] = useState(null);
@@ -115,6 +110,8 @@ const DepositoPanel = () => {
       return;
     }
 
+    let actualizarCacheTimeout;
+
     const cargarDatos = async () => {
       try {
         // Solo mostrar loading en la carga inicial, no al cambiar de pestaña
@@ -132,9 +129,6 @@ const DepositoPanel = () => {
           await cargarTransportistas();
         } else if (filtroEstado === 'ROLES') {
           await cargarUsuariosRoles();
-        } else if (filtroEstado === 'PRIORIDAD_CARGA') {
-          // La pestaña de Prioridad de Carga maneja su propia carga de datos
-          // No hacer nada aquí
         } else {
           // Para PENDIENTE, EN_PREPARACION, CONTROL, PENDIENTE_CARGA, REALIZADO
           await cargarPedidos();
@@ -156,29 +150,6 @@ const DepositoPanel = () => {
 
     // Conectar WebSocket (solo una vez, el servicio maneja múltiples conexiones)
     connectWebSocket((message) => {
-      // Función helper para actualizar el contador de planillas sin orden
-      const actualizarContadorPlanillasSinOrden = (inmediato = false) => {
-        // Si es inmediato, actualizar sin delay
-        if (inmediato) {
-          pedidoService.obtenerPendientesSinOrden()
-            .then(response => {
-              setCantidadPlanillasSinOrden((response.data || []).length);
-            })
-            .catch(err => console.error('Error al actualizar cantidad sin orden:', err));
-          return;
-        }
-        
-        // Para actualizaciones remotas, usar un pequeño debounce para evitar múltiples llamadas simultáneas
-        clearTimeout(actualizarContadorPlanillasSinOrden.timeout);
-        actualizarContadorPlanillasSinOrden.timeout = setTimeout(() => {
-          pedidoService.obtenerPendientesSinOrden()
-            .then(response => {
-              setCantidadPlanillasSinOrden((response.data || []).length);
-            })
-            .catch(err => console.error('Error al actualizar cantidad sin orden:', err));
-        }, 100); // Debounce reducido a 100ms para actualizaciones más rápidas
-      };
-      
       if (message.tipo === 'eliminado') {
         setPedidos((prev) => prev.filter((p) => p.id !== message.id));
         // Actualizar cache también
@@ -186,13 +157,7 @@ const DepositoPanel = () => {
           PENDIENTE: prev.PENDIENTE.filter(p => p.id !== message.id),
           EN_PREPARACION: prev.EN_PREPARACION.filter(p => p.id !== message.id),
         }));
-        // Actualizar cantidad de planillas sin orden cuando se elimina
-        actualizarContadorPlanillasSinOrden();
       } else {
-        // Para cualquier otro cambio (nuevo pedido, actualización, cambio de orden, etc.)
-        // Actualizar el contador de planillas sin orden
-        // Esto se ejecuta SIEMPRE cuando hay cambios, incluso si el mensaje no tiene tipo
-        actualizarContadorPlanillasSinOrden();
         // Recargar datos según la pestaña activa
         if (filtroEstado === 'TRANSPORTISTAS') {
           cargarTransportistas().catch(err => {
@@ -202,17 +167,14 @@ const DepositoPanel = () => {
           cargarUsuariosRoles().catch(err => {
             console.error('Error al recargar usuarios desde WebSocket:', err);
           });
-        } else if (filtroEstado === 'PRIORIDAD_CARGA') {
-          // La pestaña de Prioridad de Carga maneja su propia recarga vía WebSocket
-          // No hacer nada aquí
         } else if (filtroEstado === 'PENDIENTE') {
           // Para PENDIENTE: actualizar silenciosamente sin mostrar loading
           // Solo recargar si no hay datos actualmente cargados
           if (pedidos.length === 0) {
             cargarPedidos().catch(err => {
               console.error('Error al recargar pedidos desde WebSocket:', err);
-          });
-        } else {
+            });
+          } else {
             // Actualizar silenciosamente en segundo plano
             pedidoService.obtenerConOrdenPrioridadCarga()
               .then(response => {
@@ -228,40 +190,22 @@ const DepositoPanel = () => {
             console.error('Error al recargar pedidos desde WebSocket:', err);
           });
         }
-        // Recargar cache para notificaciones (incluyendo cantidad de planillas sin orden)
+        // Recargar cache para notificaciones
         // Esto se ejecuta SIEMPRE cuando hay cambios, independientemente de la pestaña activa
-        // Usar un pequeño delay para agrupar múltiples actualizaciones (cuando se actualiza el orden de varios pedidos)
-        clearTimeout(actualizarContadorPlanillasSinOrden.cacheTimeout);
-        actualizarContadorPlanillasSinOrden.cacheTimeout = setTimeout(() => {
-          // PLANILLERO y CONTROL no tienen acceso a obtenerPendientesSinOrden
-          if (user?.rol === 'PLANILLERO' || user?.rol === 'CONTROL') {
-            Promise.all([
-              pedidoService.obtenerConOrdenPrioridadCarga(),
-          pedidoService.obtenerPorEstado('EN_PREPARACION'),
-            ]).then(([pendientesConOrden, enPreparacion]) => {
-          setTodosLosPedidos({
+        // Usar un pequeño delay para agrupar múltiples actualizaciones
+        clearTimeout(actualizarCacheTimeout);
+        actualizarCacheTimeout = setTimeout(() => {
+          Promise.all([
+            pedidoService.obtenerConOrdenPrioridadCarga(),
+            pedidoService.obtenerPorEstado('EN_PREPARACION'),
+          ]).then(([pendientesConOrden, enPreparacion]) => {
+            setTodosLosPedidos({
               PENDIENTE: pendientesConOrden.data || [],
-            EN_PREPARACION: enPreparacion.data || [],
+              EN_PREPARACION: enPreparacion.data || [],
+            });
+          }).catch(err => {
+            console.error('Error al actualizar cache desde WebSocket:', err);
           });
-        }).catch(err => {
-          console.error('Error al actualizar cache desde WebSocket:', err);
-            });
-          } else {
-            Promise.all([
-              pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
-              pedidoService.obtenerPorEstado('EN_PREPARACION'),
-              pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
-            ]).then(([pendientesConOrden, enPreparacion, sinOrden]) => {
-              setTodosLosPedidos({
-                PENDIENTE: pendientesConOrden.data || [],
-                EN_PREPARACION: enPreparacion.data || [],
-              });
-              // Actualizar cantidad de planillas sin orden para el indicador (siempre, incluso si no estamos en esa pestaña)
-              setCantidadPlanillasSinOrden((sinOrden.data || []).length);
-            }).catch(err => {
-              console.error('Error al actualizar cache desde WebSocket:', err);
-            });
-          }
         }, 200); // Delay reducido a 200ms para actualizaciones más rápidas
       }
     });
@@ -352,9 +296,9 @@ const DepositoPanel = () => {
 
   // Verificar que PLANILLERO y CONTROL no accedan a secciones no permitidas
   useEffect(() => {
-    if (user?.rol === 'PLANILLERO' && ['PRIORIDAD_CARGA', 'CONTROL', 'PENDIENTE_CARGA', 'ROLES', 'TRANSPORTISTAS'].includes(filtroEstado)) {
+    if (user?.rol === 'PLANILLERO' && ['CONTROL', 'PENDIENTE_CARGA', 'ROLES', 'TRANSPORTISTAS'].includes(filtroEstado)) {
       setFiltroEstado('PENDIENTE');
-    } else if (user?.rol === 'CONTROL' && ['PRIORIDAD_CARGA', 'ROLES', 'TRANSPORTISTAS'].includes(filtroEstado)) {
+    } else if (user?.rol === 'CONTROL' && ['ROLES', 'TRANSPORTISTAS'].includes(filtroEstado)) {
       setFiltroEstado('PENDIENTE');
     }
   }, [user?.rol, filtroEstado]);
@@ -793,7 +737,7 @@ const DepositoPanel = () => {
 
       // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros)
       if (!enModoNavegacionRegistros && !isInputFocused) {
-        const tabs = ['PRIORIDAD_CARGA', 'PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'ROLES', 'TRANSPORTISTAS'];
+        const tabs = ['PENDIENTE', 'EN_PREPARACION', 'CONTROL', 'PENDIENTE_CARGA', 'REALIZADO', 'ROLES', 'TRANSPORTISTAS'];
         const currentIndex = tabs.indexOf(filtroEstado);
 
         if (event.key === 'ArrowLeft' && currentIndex > 0) {
@@ -1033,6 +977,8 @@ const DepositoPanel = () => {
         } else if (showUsuarioModal) {
         setShowUsuarioModal(false);
         setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
+        } else if (showResumenModal) {
+          setShowResumenModal(false);
         }
       }
     };
@@ -1041,40 +987,21 @@ const DepositoPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showGrupoModal, showUsuarioModal]);
+  }, [showGrupoModal, showUsuarioModal, showResumenModal]);
 
   // Función para cargar todos los pedidos para calcular notificaciones
   const cargarTodosLosPedidosParaNotificaciones = async () => {
-    // PLANILLERO y CONTROL no tienen acceso a obtenerPendientesSinOrden, solo cargar lo que pueden
-    if (user?.rol === 'PLANILLERO' || user?.rol === 'CONTROL') {
     try {
-        const [pendientesConOrden, enPreparacion] = await Promise.all([
-          pedidoService.obtenerConOrdenPrioridadCarga(),
+      const [pendientesConOrden, enPreparacion] = await Promise.all([
+        pedidoService.obtenerConOrdenPrioridadCarga(),
         pedidoService.obtenerPorEstado('EN_PREPARACION'),
-        ]);
+      ]);
       setTodosLosPedidos({
         PENDIENTE: pendientesConOrden.data || [],
         EN_PREPARACION: enPreparacion.data || [],
       });
     } catch (error) {
       console.error('Error al cargar todos los pedidos:', error);
-      }
-    } else {
-      try {
-        const [pendientesConOrden, enPreparacion, sinOrden] = await Promise.all([
-          pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado (los que aparecen en "Pendientes")
-          pedidoService.obtenerPorEstado('EN_PREPARACION'),
-          pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
-        ]);
-        setTodosLosPedidos({
-          PENDIENTE: pendientesConOrden.data || [],
-          EN_PREPARACION: enPreparacion.data || [],
-        });
-        // Actualizar cantidad de planillas sin orden para el indicador
-        setCantidadPlanillasSinOrden((sinOrden.data || []).length);
-      } catch (error) {
-        console.error('Error al cargar todos los pedidos:', error);
-      }
     }
   };
 
@@ -1089,7 +1016,7 @@ const DepositoPanel = () => {
     if (!notificationIntervalSet.current) {
       notificationIntervalSet.current = true;
       cargarTodosLosPedidosParaNotificaciones();
-      // Recargar cada 5 segundos para actualizar notificaciones y contador de planillas sin orden
+      // Recargar cada 5 segundos para actualizar notificaciones
       const interval = setInterval(cargarTodosLosPedidosParaNotificaciones, 5000);
       return () => {
         clearInterval(interval);
@@ -1399,32 +1326,9 @@ const DepositoPanel = () => {
                     (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') ? 1000 : 300;
       setTimeout(async () => {
         try {
-          // PLANILLERO y CONTROL no tienen acceso a obtenerPendientesSinOrden
-          if (user?.rol === 'PLANILLERO' || user?.rol === 'CONTROL') {
-            const [pendientesConOrden, enPreparacion] = await Promise.all([
-              pedidoService.obtenerConOrdenPrioridadCarga(),
-              pedidoService.obtenerPorEstado('EN_PREPARACION'),
-            ]);
-            // Para cambios de PENDIENTE a EN_PREPARACION, solo actualizar si el pedido está en EN_PREPARACION en el backend
-            if (estadoAnterior === 'PENDIENTE' && nuevoEstado === 'EN_PREPARACION') {
-              const pedidoEnBackend = enPreparacion.data?.find(p => p.id === pedidoId);
-              if (pedidoEnBackend) {
-                setTodosLosPedidos({
-                  PENDIENTE: pendientesConOrden.data || [],
-                  EN_PREPARACION: enPreparacion.data || [],
-                });
-              }
-            } else {
-              setTodosLosPedidos({
-                PENDIENTE: pendientesConOrden.data || [],
-                EN_PREPARACION: enPreparacion.data || [],
-              });
-            }
-          } else {
-          const [pendientesConOrden, enPreparacion, sinOrden] = await Promise.all([
-            pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
+          const [pendientesConOrden, enPreparacion] = await Promise.all([
+            pedidoService.obtenerConOrdenPrioridadCarga(),
             pedidoService.obtenerPorEstado('EN_PREPARACION'),
-            pedidoService.obtenerPendientesSinOrden(), // Planillas recibidas sin orden
           ]);
           
           // Para cambios de PENDIENTE a EN_PREPARACION, solo actualizar si el pedido está en EN_PREPARACION en el backend
@@ -1441,7 +1345,7 @@ const DepositoPanel = () => {
               setTimeout(async () => {
                 try {
                   const [pendientesConOrden2, enPreparacion2] = await Promise.all([
-                    pedidoService.obtenerConOrdenPrioridadCarga(), // Solo pedidos con orden asignado
+                    pedidoService.obtenerConOrdenPrioridadCarga(),
                     pedidoService.obtenerPorEstado('EN_PREPARACION'),
                   ]);
                   const pedidoEnBackend2 = enPreparacion2.data?.find(p => p.id === pedidoId);
@@ -1456,22 +1360,12 @@ const DepositoPanel = () => {
                 }
               }, 1000);
             }
-          } else if (estadoAnterior === 'EN_PREPARACION' && nuevoEstado === 'PENDIENTE') {
-            // Cuando vuelve de EN_PREPARACION a PENDIENTE, el backend mantiene el ordenPrioridadCarga
-            // por lo que el pedido vuelve a aparecer en la lista de pendientes con orden
-            setTodosLosPedidos({
-              PENDIENTE: pendientesConOrden.data || [],
-              EN_PREPARACION: enPreparacion.data || [],
-            });
-            setCantidadPlanillasSinOrden((sinOrden.data || []).length);
           } else {
             // Para otros cambios, actualizar normalmente
             setTodosLosPedidos({
               PENDIENTE: pendientesConOrden.data || [],
               EN_PREPARACION: enPreparacion.data || [],
             });
-            setCantidadPlanillasSinOrden((sinOrden.data || []).length);
-          }
           }
         } catch (err) {
           console.error('Error al actualizar cache después de cambiar estado:', err);
@@ -1925,37 +1819,6 @@ const DepositoPanel = () => {
 
       <div className="filtros">
         <div className="filtros-buttons">
-            {user?.rol !== 'PLANILLERO' && user?.rol !== 'CONTROL' && (
-            <button
-              className={filtroEstado === 'PRIORIDAD_CARGA' ? 'active' : ''}
-              onClick={() => setFiltroEstado('PRIORIDAD_CARGA')}
-              style={{ position: 'relative' }}
-            >
-              Prioridad de Carga
-              {cantidadPlanillasSinOrden > 0 && (
-                <span
-                  style={{
-                    position: 'absolute',
-                    top: '-8px',
-                    right: '-8px',
-                    backgroundColor: '#F44336',
-                    color: 'white',
-                    borderRadius: '50%',
-                    width: '24px',
-                    height: '24px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '12px',
-                    fontWeight: 'bold',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                  }}
-                >
-                  {cantidadPlanillasSinOrden}
-                </span>
-              )}
-            </button>
-          )}
           <button
             className={filtroEstado === 'PENDIENTE' ? 'active' : ''}
             onClick={() => setFiltroEstado('PENDIENTE')}
@@ -2111,32 +1974,6 @@ const DepositoPanel = () => {
       </div>
 
       <div className="content-section">
-        {/* Tab de Prioridad de Carga - Solo para ADMIN_DEPOSITO */}
-        {filtroEstado === 'PRIORIDAD_CARGA' && user?.rol !== 'PLANILLERO' && (
-          <GestionPrioridadCarga 
-            onContadorCambio={(nuevaCantidad) => {
-              // Actualizar el contador inmediatamente cuando cambia desde GestionPrioridadCarga
-              setCantidadPlanillasSinOrden(nuevaCantidad);
-            }}
-            onPedidoAgregadoACola={(pedido) => {
-              // Actualizar optimistamente el contador de Pendientes cuando se agrega a la cola
-              setTodosLosPedidos(prev => ({
-                ...prev,
-                PENDIENTE: [...prev.PENDIENTE, pedido].sort((a, b) => 
-                  (a.ordenPrioridadCarga || 0) - (b.ordenPrioridadCarga || 0)
-                )
-              }));
-            }}
-            onPedidoRemovidoDeCola={(pedidoId) => {
-              // Actualizar optimistamente el contador de Pendientes cuando se remueve de la cola
-              setTodosLosPedidos(prev => ({
-                ...prev,
-                PENDIENTE: prev.PENDIENTE.filter(p => p.id !== pedidoId)
-              }));
-            }}
-          />
-        )}
-        
         {/* Tab de Roles */}
         {filtroEstado === 'ROLES' && (
           <div style={{
@@ -2514,7 +2351,21 @@ const DepositoPanel = () => {
               >
                 {/* Encabezado del día - clickeable para expandir/colapsar */}
                 <div
+                  ref={(el) => {
+                    if (el) {
+                      diaButtonRefs.current[index] = el;
+                    }
+                  }}
+                  tabIndex={0}
+                  onClick={() => toggleDia(dia.fecha)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      toggleDia(dia.fecha);
+                    }
+                  }}
                   style={{
+                    cursor: 'pointer',
                     padding: '15px 20px',
                     backgroundColor: dia.esHoy ? '#E0F2F1' : '#FFFFFF',
                     border: dia.esHoy ? '2px solid #0f766e' : '2px solid #E0E0E0',
@@ -2525,36 +2376,42 @@ const DepositoPanel = () => {
                     alignItems: 'center',
                     transition: 'all 0.2s ease',
                     boxShadow: dia.esHoy ? '0 2px 4px rgba(15, 118, 110, 0.2)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
+                    outline: diaSeleccionadoIndex === index ? '3px solid #0f766e' : 'none',
+                    outlineOffset: '-2px',
+                  }}
+                  onFocus={(e) => {
+                    if (diaSeleccionadoIndex === index) {
+                      e.currentTarget.style.outline = '3px solid #0f766e';
+                    }
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.outline = 'none';
+                  }}
+                  onMouseEnter={(e) => {
+                    if (dia.esHoy) {
+                      e.currentTarget.style.backgroundColor = '#B2DFDB';
+                      e.currentTarget.style.borderColor = '#0d9488';
+                    } else {
+                      e.currentTarget.style.backgroundColor = '#F5F5F5';
+                      e.currentTarget.style.borderColor = '#9E9E9E';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (dia.esHoy) {
+                      e.currentTarget.style.backgroundColor = '#E0F2F1';
+                      e.currentTarget.style.borderColor = '#0f766e';
+                    } else {
+                      e.currentTarget.style.backgroundColor = '#FFFFFF';
+                      e.currentTarget.style.borderColor = '#E0E0E0';
+                    }
                   }}
                 >
                   <div
-                    onClick={() => toggleDia(dia.fecha)}
                     style={{
-                      cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '15px',
                       flex: 1,
-                    }}
-                    onMouseEnter={(e) => {
-                      const parent = e.currentTarget.parentElement;
-                      if (dia.esHoy) {
-                        parent.style.backgroundColor = '#B2DFDB';
-                        parent.style.borderColor = '#0d9488';
-                      } else {
-                        parent.style.backgroundColor = '#F5F5F5';
-                        parent.style.borderColor = '#9E9E9E';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      const parent = e.currentTarget.parentElement;
-                      if (dia.esHoy) {
-                        parent.style.backgroundColor = '#E0F2F1';
-                        parent.style.borderColor = '#0f766e';
-                      } else {
-                        parent.style.backgroundColor = '#FFFFFF';
-                        parent.style.borderColor = '#E0E0E0';
-                      }
                     }}
                   >
                     <span style={{ fontSize: '1.2rem' }}>
@@ -2662,21 +2519,12 @@ const DepositoPanel = () => {
                                 gap: '8px',
                                 flexWrap: 'wrap'
                               }}>
-                                <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: false,
-                                })}</span>
-                                {getFechaEntregaTexto(pedido) && (
-                                  <span style={{ 
-                                    fontWeight: '600', 
-                                    color: '#2563eb',
-                                    backgroundColor: '#eff6ff',
-                                    padding: '2px 8px',
-                                    borderRadius: '4px'
-                                  }}>
-                                    📅 {getFechaEntregaTexto(pedido)}
-                                  </span>
+                                {pedido.fechaEntradaColaPrioridad && (
+                                  <span>🕐 {new Date(pedido.fechaEntradaColaPrioridad).toLocaleTimeString('es-AR', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: false,
+                                  })}</span>
                                 )}
                               </div>
                             </div>
@@ -2734,6 +2582,45 @@ const DepositoPanel = () => {
                               <div className="info-label">👥 Equipo</div>
                               <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
                             </div>
+                            {pedido.fechaEntrega && (
+                              <div className="info-item">
+                                <div className="info-label">📅 Despacho</div>
+                                <div className="info-value">
+                                  {(() => {
+                                    // Función auxiliar para parsear fecha sin problemas de zona horaria
+                                    const parseFechaLocal = (fechaString) => {
+                                      if (!fechaString) return null;
+                                      if (fechaString instanceof Date) return fechaString;
+                                      const parts = fechaString.split('-');
+                                      if (parts.length !== 3) return new Date(fechaString);
+                                      const year = parseInt(parts[0], 10);
+                                      const month = parseInt(parts[1], 10) - 1;
+                                      const day = parseInt(parts[2], 10);
+                                      return new Date(year, month, day);
+                                    };
+
+                                    const hoy = new Date();
+                                    hoy.setHours(0, 0, 0, 0);
+                                    const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+                                    if (!fechaEntrega) return 'Fecha inválida';
+                                    fechaEntrega.setHours(0, 0, 0, 0);
+                                    const diffTime = fechaEntrega - hoy;
+                                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                                    
+                                    if (diffDays === 0) {
+                                      return 'Sale hoy';
+                                    } else if (diffDays === 1) {
+                                      return 'Sale mañana';
+                                    } else {
+                                      const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                                      const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                                      const year = String(fechaEntrega.getFullYear()).slice(-2);
+                                      return `Sale ${day}/${month}/${year}`;
+                                    }
+                                  })()}
+                                </div>
+                              </div>
+                            )}
                             <div className="info-item">
                               <div className="info-label">📋 Estado</div>
                               <span
@@ -2779,100 +2666,190 @@ const DepositoPanel = () => {
                             </div>
                           )}
                           
-                          {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
+                          {/* Timestamps de etapas */}
+                          {(pedido.fechaPreparacion || pedido.fechaControl || pedido.fechaPendienteCarga || pedido.fechaFinalizado) && (
                             <div style={{
                               display: 'flex',
+                              flexDirection: 'column',
                               gap: '12px',
                               marginTop: '8px'
                             }}>
-                              {pedido.fechaPendienteCarga && (
+                              {/* Primera fila: Preparación y Control */}
+                              {(pedido.fechaPreparacion || pedido.fechaControl) && (
                                 <div style={{
-                                  flex: 1,
-                                  padding: '12px',
-                                  background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
-                                  borderRadius: '8px',
-                                  border: '1px solid #ffb74d'
+                                  display: 'flex',
+                                  gap: '12px'
                                 }}>
-                                  <div style={{ 
-                                    fontSize: '0.85rem', 
-                                    fontWeight: '600', 
-                                    color: '#E65100',
-                                    marginBottom: '4px'
-                                  }}>
-                                    ✅ Controlado
-                                  </div>
-                                  <div style={{ 
-                                    fontSize: '0.9rem', 
-                                    color: '#F57C00',
-                                    fontWeight: '500',
-                                    marginBottom: '4px'
-                                  }}>
-                                    {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
-                                      year: 'numeric',
-                                      month: '2-digit',
-                                      day: '2-digit',
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                      hour12: false,
-                                    })}
-                                  </div>
-                                  {pedido.controladoPor && (
-                                    <div style={{ 
-                                      fontSize: '0.85rem', 
-                                      color: '#E65100',
-                                      fontWeight: '500',
-                                      marginTop: '4px',
-                                      paddingTop: '4px',
-                                      borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                                  {pedido.fechaPreparacion && (
+                                    <div style={{
+                                      flex: 1,
+                                      padding: '12px',
+                                      background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
+                                      borderRadius: '8px',
+                                      border: '1px solid #90caf9'
                                     }}>
-                                      <strong>Controlado por:</strong> {pedido.controladoPor}
+                                      <div style={{ 
+                                        fontSize: '0.85rem', 
+                                        fontWeight: '600', 
+                                        color: '#1565c0',
+                                        marginBottom: '4px'
+                                      }}>
+                                        ⏰ Preparación
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '0.9rem', 
+                                        color: '#1976d2',
+                                        fontWeight: '500'
+                                      }}>
+                                        {new Date(pedido.fechaPreparacion).toLocaleString('es-AR', {
+                                          year: 'numeric',
+                                          month: '2-digit',
+                                          day: '2-digit',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                          hour12: false,
+                                        })}
+                                      </div>
                                     </div>
+                                  )}
+                                  {pedido.fechaControl && (
+                                    <div style={{
+                                      flex: 1,
+                                      padding: '12px',
+                                      background: 'linear-gradient(135deg, #fff9c4 0%, #fff59d 100%)',
+                                      borderRadius: '8px',
+                                      border: '1px solid #fff176'
+                                    }}>
+                                      <div style={{ 
+                                        fontSize: '0.85rem', 
+                                        fontWeight: '600', 
+                                        color: '#f57f17',
+                                        marginBottom: '4px'
+                                      }}>
+                                        🔍 Control
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '0.9rem', 
+                                        color: '#f9a825',
+                                        fontWeight: '500'
+                                      }}>
+                                        {new Date(pedido.fechaControl).toLocaleString('es-AR', {
+                                          year: 'numeric',
+                                          month: '2-digit',
+                                          day: '2-digit',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                          hour12: false,
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {!pedido.fechaPreparacion && pedido.fechaControl && (
+                                    <div style={{ flex: 1 }}></div>
                                   )}
                                 </div>
                               )}
-                              <div style={{
-                                flex: 1,
-                                padding: '12px',
-                                background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                borderRadius: '8px',
-                                border: '1px solid #86efac'
-                              }}>
-                                <div style={{ 
-                                  fontSize: '0.85rem', 
-                                  fontWeight: '600', 
-                                  color: '#166534',
-                                  marginBottom: '4px'
+                              {/* Segunda fila: Pendiente de Carga y Finalizado */}
+                              {(pedido.fechaPendienteCarga || pedido.fechaFinalizado) && (
+                                <div style={{
+                                  display: 'flex',
+                                  gap: '12px'
                                 }}>
-                                  ✅ Finalizado
+                                  {pedido.fechaPendienteCarga && (
+                                    <div style={{
+                                      flex: 1,
+                                      padding: '12px',
+                                      background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                                      borderRadius: '8px',
+                                      border: '1px solid #ffb74d'
+                                    }}>
+                                      <div style={{ 
+                                        fontSize: '0.85rem', 
+                                        fontWeight: '600', 
+                                        color: '#E65100',
+                                        marginBottom: '4px'
+                                      }}>
+                                        ✅ Pendiente de Carga
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '0.9rem', 
+                                        color: '#F57C00',
+                                        fontWeight: '500',
+                                        marginBottom: '4px'
+                                      }}>
+                                        {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
+                                          year: 'numeric',
+                                          month: '2-digit',
+                                          day: '2-digit',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                          hour12: false,
+                                        })}
+                                      </div>
+                                      {pedido.controladoPor && (
+                                        <div style={{ 
+                                          fontSize: '0.85rem', 
+                                          color: '#E65100',
+                                          fontWeight: '500',
+                                          marginTop: '4px',
+                                          paddingTop: '4px',
+                                          borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                                        }}>
+                                          <strong>Controlado por:</strong> {pedido.controladoPor}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {pedido.fechaFinalizado && (
+                                    <div style={{
+                                      flex: 1,
+                                      padding: '12px',
+                                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                      borderRadius: '8px',
+                                      border: '1px solid #86efac'
+                                    }}>
+                                      <div style={{ 
+                                        fontSize: '0.85rem', 
+                                        fontWeight: '600', 
+                                        color: '#166534',
+                                        marginBottom: '4px'
+                                      }}>
+                                        ✅ Finalizado
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '0.9rem', 
+                                        color: '#15803d',
+                                        fontWeight: '500',
+                                        marginBottom: '4px'
+                                      }}>
+                                        {new Date(pedido.fechaFinalizado).toLocaleString('es-AR', {
+                                          year: 'numeric',
+                                          month: '2-digit',
+                                          day: '2-digit',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                          hour12: false,
+                                        })}
+                                      </div>
+                                      {pedido.finalizadoPor && (
+                                        <div style={{ 
+                                          fontSize: '0.85rem', 
+                                          color: '#15803d',
+                                          fontWeight: '500',
+                                          marginTop: '4px',
+                                          paddingTop: '4px',
+                                          borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                                        }}>
+                                          <strong>Finalizado por:</strong> {pedido.finalizadoPor}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {!pedido.fechaPendienteCarga && pedido.fechaFinalizado && (
+                                    <div style={{ flex: 1 }}></div>
+                                  )}
                                 </div>
-                                <div style={{ 
-                                  fontSize: '0.9rem', 
-                                  color: '#15803d',
-                                  fontWeight: '500',
-                                  marginBottom: '4px'
-                                }}>
-                                {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
-                                  year: 'numeric',
-                                  month: '2-digit',
-                                  day: '2-digit',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: false,
-                                })}
-                                </div>
-                                {pedido.finalizadoPor && (
-                                  <div style={{ 
-                                    fontSize: '0.85rem', 
-                                    color: '#15803d',
-                                    fontWeight: '500',
-                                    marginTop: '4px',
-                                    paddingTop: '4px',
-                                    borderTop: '1px solid rgba(21, 128, 61, 0.2)'
-                                  }}>
-                                    <strong>Finalizado por:</strong> {pedido.finalizadoPor}
-                                  </div>
-                                )}
-                              </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -2920,7 +2897,7 @@ const DepositoPanel = () => {
           </div>
         )}
 
-        {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'ROLES' && filtroEstado !== 'REALIZADO' && filtroEstado !== 'PRIORIDAD_CARGA' && (
+        {filtroEstado !== 'TRANSPORTISTAS' && filtroEstado !== 'ROLES' && filtroEstado !== 'REALIZADO' && (
           <div>
             {/* Buscador para PENDIENTE */}
             {filtroEstado === 'PENDIENTE' && (
@@ -3056,7 +3033,25 @@ const DepositoPanel = () => {
                 }
               }}
             >
-              <div className="pedido-header">
+              <div className="pedido-header" style={{ position: 'relative' }}>
+                {pedido.ordenPrioridadCarga && filtroEstado === 'PENDIENTE' && (
+                  <span style={{
+                    position: 'absolute',
+                    top: '-8px',
+                    right: '-8px',
+                    fontSize: '0.9rem',
+                    fontWeight: '700',
+                    color: '#0f766e',
+                    backgroundColor: '#e0f2f1',
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    border: '2px solid #0d9488',
+                    boxShadow: '0 2px 6px rgba(15, 118, 110, 0.3)',
+                    zIndex: 10
+                  }}>
+                    #{pedido.ordenPrioridadCarga}
+                  </span>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div style={{
                     width: '48px',
@@ -3086,21 +3081,12 @@ const DepositoPanel = () => {
                       gap: '8px',
                       flexWrap: 'wrap'
                     }}>
-                      <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })}</span>
-                      {getFechaEntregaTexto(pedido) && (
-                        <span style={{ 
-                          fontWeight: '600', 
-                          color: '#2563eb',
-                          backgroundColor: '#eff6ff',
-                          padding: '2px 8px',
-                          borderRadius: '4px'
-                        }}>
-                          📅 {getFechaEntregaTexto(pedido)}
-                        </span>
+                      {pedido.fechaEntradaColaPrioridad && (
+                        <span>🕐 {new Date(pedido.fechaEntradaColaPrioridad).toLocaleTimeString('es-AR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}</span>
                       )}
                     </div>
                   </div>
@@ -3158,27 +3144,38 @@ const DepositoPanel = () => {
                     <>
                       {pedido.fechaEntrega && (
                         <div className="info-item">
-                          <div className="info-label">📅 Fecha de Despacho</div>
+                          <div className="info-label">📅 Despacho</div>
                           <div className="info-value">
                             {(() => {
+                              // Función auxiliar para parsear fecha sin problemas de zona horaria
+                              const parseFechaLocal = (fechaString) => {
+                                if (!fechaString) return null;
+                                if (fechaString instanceof Date) return fechaString;
+                                const parts = fechaString.split('-');
+                                if (parts.length !== 3) return new Date(fechaString);
+                                const year = parseInt(parts[0], 10);
+                                const month = parseInt(parts[1], 10) - 1;
+                                const day = parseInt(parts[2], 10);
+                                return new Date(year, month, day);
+                              };
+
                               const hoy = new Date();
                               hoy.setHours(0, 0, 0, 0);
-                              const fechaEntrega = new Date(pedido.fechaEntrega);
+                              const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+                              if (!fechaEntrega) return 'Fecha inválida';
                               fechaEntrega.setHours(0, 0, 0, 0);
                               const diffTime = fechaEntrega - hoy;
                               const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
                               
                               if (diffDays === 0) {
-                                return 'Hoy';
+                                return 'Sale hoy';
                               } else if (diffDays === 1) {
-                                return 'Mañana';
+                                return 'Sale mañana';
                               } else {
-                                return fechaEntrega.toLocaleDateString('es-AR', {
-                                  weekday: 'long',
-                                  day: 'numeric',
-                                  month: 'long',
-                                  year: 'numeric'
-                                });
+                                const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                                const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                                const year = String(fechaEntrega.getFullYear()).slice(-2);
+                                return `Sale ${day}/${month}/${year}`;
                               }
                             })()}
                           </div>
@@ -3200,6 +3197,45 @@ const DepositoPanel = () => {
                     <div className="info-label">👥 Equipo</div>
                     <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
                   </div>
+                      {pedido.fechaEntrega && (
+                        <div className="info-item">
+                          <div className="info-label">📅 Despacho</div>
+                          <div className="info-value">
+                            {(() => {
+                              // Función auxiliar para parsear fecha sin problemas de zona horaria
+                              const parseFechaLocal = (fechaString) => {
+                                if (!fechaString) return null;
+                                if (fechaString instanceof Date) return fechaString;
+                                const parts = fechaString.split('-');
+                                if (parts.length !== 3) return new Date(fechaString);
+                                const year = parseInt(parts[0], 10);
+                                const month = parseInt(parts[1], 10) - 1;
+                                const day = parseInt(parts[2], 10);
+                                return new Date(year, month, day);
+                              };
+
+                              const hoy = new Date();
+                              hoy.setHours(0, 0, 0, 0);
+                              const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+                              if (!fechaEntrega) return 'Fecha inválida';
+                              fechaEntrega.setHours(0, 0, 0, 0);
+                              const diffTime = fechaEntrega - hoy;
+                              const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                              
+                              if (diffDays === 0) {
+                                return 'Sale hoy';
+                              } else if (diffDays === 1) {
+                                return 'Sale mañana';
+                              } else {
+                                const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                                const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                                const year = String(fechaEntrega.getFullYear()).slice(-2);
+                                return `Sale ${day}/${month}/${year}`;
+                              }
+                            })()}
+                          </div>
+                        </div>
+                      )}
                   <div className="info-item">
                     <div className="info-label">📋 Estado</div>
                   <span
@@ -3213,100 +3249,190 @@ const DepositoPanel = () => {
                   )}
                 </div>
                 
-                {pedido.estado === 'REALIZADO' && pedido.fechaActualizacion && (
+                {/* Timestamps de etapas */}
+                {(pedido.fechaPreparacion || pedido.fechaControl || pedido.fechaPendienteCarga || pedido.fechaFinalizado) && (
                   <div style={{
                     display: 'flex',
+                    flexDirection: 'column',
                     gap: '12px',
                     marginTop: '8px'
                   }}>
-                    {pedido.fechaPendienteCarga && (
+                    {/* Primera fila: Preparación y Control */}
+                    {(pedido.fechaPreparacion || pedido.fechaControl) && (
                       <div style={{
-                        flex: 1,
-                        padding: '12px',
-                        background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
-                        borderRadius: '8px',
-                        border: '1px solid #ffb74d'
+                        display: 'flex',
+                        gap: '12px'
                       }}>
-                        <div style={{ 
-                          fontSize: '0.85rem', 
-                          fontWeight: '600', 
-                          color: '#E65100',
-                          marginBottom: '4px'
-                        }}>
-                          ✅ Controlado
-                        </div>
-                        <div style={{ 
-                          fontSize: '0.9rem', 
-                          color: '#F57C00',
-                          fontWeight: '500',
-                          marginBottom: '4px'
-                        }}>
-                          {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: false,
-                          })}
-                        </div>
-                        {pedido.controladoPor && (
-                          <div style={{ 
-                            fontSize: '0.85rem', 
-                            color: '#E65100',
-                            fontWeight: '500',
-                            marginTop: '4px',
-                            paddingTop: '4px',
-                            borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                        {pedido.fechaPreparacion && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #90caf9'
                           }}>
-                            <strong>Controlado por:</strong> {pedido.controladoPor}
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#1565c0',
+                              marginBottom: '4px'
+                            }}>
+                              ⏰ Preparación
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#1976d2',
+                              fontWeight: '500'
+                            }}>
+                              {new Date(pedido.fechaPreparacion).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
                           </div>
+                        )}
+                        {pedido.fechaControl && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #fff9c4 0%, #fff59d 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #fff176'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#f57f17',
+                              marginBottom: '4px'
+                            }}>
+                              🔍 Control
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#f9a825',
+                              fontWeight: '500'
+                            }}>
+                              {new Date(pedido.fechaControl).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {!pedido.fechaPreparacion && pedido.fechaControl && (
+                          <div style={{ flex: 1 }}></div>
                         )}
                       </div>
                     )}
-                    <div style={{
-                      flex: 1,
-                    padding: '12px',
-                    background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                    borderRadius: '8px',
-                      border: '1px solid #86efac'
-                  }}>
-                    <div style={{ 
-                      fontSize: '0.85rem', 
-                      fontWeight: '600', 
-                      color: '#166534',
-                      marginBottom: '4px'
-                    }}>
-                      ✅ Finalizado
-                    </div>
-                    <div style={{ 
-                      fontSize: '0.9rem', 
-                      color: '#15803d',
-                      fontWeight: '500',
-                        marginBottom: '4px'
-                    }}>
-                      {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })}
-                    </div>
-                      {pedido.finalizadoPor && (
-                    <div style={{ 
-                      fontSize: '0.85rem', 
-                          color: '#15803d',
-                      fontWeight: '500',
-                      marginTop: '4px',
-                      paddingTop: '4px',
-                          borderTop: '1px solid rgba(21, 128, 61, 0.2)'
-                        }}>
-                          <strong>Finalizado por:</strong> {pedido.finalizadoPor}
-                        </div>
-                      )}
-                    </div>
+                    {/* Segunda fila: Pendiente de Carga y Finalizado */}
+                    {(pedido.fechaPendienteCarga || pedido.fechaFinalizado) && (
+                      <div style={{
+                        display: 'flex',
+                        gap: '12px'
+                      }}>
+                        {pedido.fechaPendienteCarga && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #ffb74d'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#E65100',
+                              marginBottom: '4px'
+                            }}>
+                              ✅ Pendiente de Carga
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#F57C00',
+                              fontWeight: '500',
+                              marginBottom: '4px'
+                            }}>
+                              {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                            {pedido.controladoPor && (
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                color: '#E65100',
+                                fontWeight: '500',
+                                marginTop: '4px',
+                                paddingTop: '4px',
+                                borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                              }}>
+                                <strong>Controlado por:</strong> {pedido.controladoPor}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {pedido.fechaFinalizado && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #86efac'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#166534',
+                              marginBottom: '4px'
+                            }}>
+                              ✅ Finalizado
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#15803d',
+                              fontWeight: '500',
+                              marginBottom: '4px'
+                            }}>
+                              {new Date(pedido.fechaFinalizado).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                            {pedido.finalizadoPor && (
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                color: '#15803d',
+                                fontWeight: '500',
+                                marginTop: '4px',
+                                paddingTop: '4px',
+                                borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                              }}>
+                                <strong>Finalizado por:</strong> {pedido.finalizadoPor}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!pedido.fechaPendienteCarga && pedido.fechaFinalizado && (
+                          <div style={{ flex: 1 }}></div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -3443,8 +3569,8 @@ const DepositoPanel = () => {
                         Preparar
                       </button>
                     )}
-                    {/* Botones para EN_PREPARACION (sin etapaPreparacion) - Solo para PLANILLERO */}
-                    {filtroEstado === 'EN_PREPARACION' && pedido.estado === 'EN_PREPARACION' && !pedido.etapaPreparacion && user?.rol === 'PLANILLERO' && (
+                    {/* Botones para EN_PREPARACION (sin etapaPreparacion) - Solo para PLANILLERO y solo si la planilla pertenece al planillero */}
+                    {filtroEstado === 'EN_PREPARACION' && pedido.estado === 'EN_PREPARACION' && !pedido.etapaPreparacion && user?.rol === 'PLANILLERO' && pedido.grupoNombre === user?.nombreCompleto && (
                       <div className="mobile-button-group" style={{ display: 'flex', gap: '12px', width: '100%' }}>
                         <button
                           ref={(el) => {
@@ -3800,6 +3926,7 @@ const DepositoPanel = () => {
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, username: e.target.value })
                   }
+                  autoComplete="off"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -3836,6 +3963,7 @@ const DepositoPanel = () => {
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, password: e.target.value })
                   }
+                  autoComplete="new-password"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -3891,8 +4019,55 @@ const DepositoPanel = () => {
 
       {/* Modal de Resumen */}
       {showResumenModal && (() => {
+        // Función para toggle de minimizar/maximizar columna
+        const toggleColumnaResumen = (vueltaNombre) => {
+          setColumnasResumenMinimizadas(prev => {
+            const nuevo = new Set(prev);
+            if (nuevo.has(vueltaNombre)) {
+              nuevo.delete(vueltaNombre);
+            } else {
+              nuevo.add(vueltaNombre);
+            }
+            return nuevo;
+          });
+        };
+
+        // Función auxiliar para parsear fecha sin problemas de zona horaria
+        const parseFechaLocal = (fechaString) => {
+          if (!fechaString) return null;
+          if (fechaString instanceof Date) return fechaString;
+          const parts = fechaString.split('-');
+          if (parts.length !== 3) return new Date(fechaString);
+          const year = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10) - 1;
+          const day = parseInt(parts[2], 10);
+          return new Date(year, month, day);
+        };
+
+        // Función para obtener la fecha de despacho en formato DD/MM/YY
+        const getFechaDespachoTexto = (pedido) => {
+          if (!pedido.fechaEntrega) return '-';
+          const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+          if (!fechaEntrega) return '-';
+          const day = String(fechaEntrega.getDate()).padStart(2, '0');
+          const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+          const year = String(fechaEntrega.getFullYear()).slice(-2);
+          return `${day}/${month}/${year}`;
+        };
+
+        // Ordenar pedidos por fecha de despacho (más antiguo primero, es decir, orden cronológico)
+        const pedidosOrdenados = [...pedidosResumen].sort((a, b) => {
+          const fechaA = a.fechaEntrega ? parseFechaLocal(a.fechaEntrega)?.getTime() || 0 : 0;
+          const fechaB = b.fechaEntrega ? parseFechaLocal(b.fechaEntrega)?.getTime() || 0 : 0;
+          // Si no tienen fecha, ponerlos al final
+          if (fechaA === 0 && fechaB === 0) return 0;
+          if (fechaA === 0) return 1;
+          if (fechaB === 0) return -1;
+          return fechaA - fechaB; // De más antiguo a más reciente (orden cronológico)
+        });
+
         // Agrupar pedidos por vuelta
-        const pedidosAgrupadosPorVuelta = pedidosResumen.reduce((acc, pedido) => {
+        const pedidosAgrupadosPorVuelta = pedidosOrdenados.reduce((acc, pedido) => {
           const vueltaNombre = pedido.vueltaNombre || 'Sin vuelta';
           if (!acc[vueltaNombre]) {
             acc[vueltaNombre] = [];
@@ -3901,82 +4076,232 @@ const DepositoPanel = () => {
           return acc;
         }, {});
 
-        // Ordenar las vueltas (Sin vuelta al final)
+        // Ordenar las vueltas por fecha de creación más antigua de sus pedidos (orden de creación)
         const vueltasOrdenadas = Object.keys(pedidosAgrupadosPorVuelta).sort((a, b) => {
+          // "Sin vuelta" siempre al final
           if (a === 'Sin vuelta') return 1;
           if (b === 'Sin vuelta') return -1;
-          return a.localeCompare(b);
+          
+          // Obtener la fecha de creación más antigua de cada vuelta (cuando se creó el primer pedido de esa vuelta)
+          const pedidosA = pedidosAgrupadosPorVuelta[a];
+          const pedidosB = pedidosAgrupadosPorVuelta[b];
+          
+          // Si alguna vuelta no tiene pedidos, ponerla al final
+          if (pedidosA.length === 0 && pedidosB.length === 0) return 0;
+          if (pedidosA.length === 0) return 1;
+          if (pedidosB.length === 0) return -1;
+          
+          const fechasCreacionA = pedidosA
+            .map(p => p.fechaCreacion ? new Date(p.fechaCreacion).getTime() : Infinity)
+            .filter(t => t !== Infinity);
+          const fechasCreacionB = pedidosB
+            .map(p => p.fechaCreacion ? new Date(p.fechaCreacion).getTime() : Infinity)
+            .filter(t => t !== Infinity);
+          
+          // Si no tienen fechas, mantener el orden original
+          if (fechasCreacionA.length === 0 && fechasCreacionB.length === 0) return 0;
+          if (fechasCreacionA.length === 0) return 1;
+          if (fechasCreacionB.length === 0) return -1;
+          
+          // Ordenar por la fecha de creación más antigua (más antiguas primero = creadas primero)
+          const fechaMasAntiguaA = Math.min(...fechasCreacionA);
+          const fechaMasAntiguaB = Math.min(...fechasCreacionB);
+          
+          return fechaMasAntiguaA - fechaMasAntiguaB;
         });
 
         return (
-        <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflow: 'auto' }}>
-            <h3>Resumen - {fechaResumen}</h3>
-            <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
+        <div 
+          className="modal-overlay" 
+          onClick={() => setShowResumenModal(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            zIndex: 2000,
+            padding: 0,
+            margin: 0
+          }}
+        >
+            <div 
+              className="modal" 
+              onClick={(e) => e.stopPropagation()} 
+              style={{ 
+                width: '100%',
+                height: '100vh',
+                maxWidth: '100%',
+                maxHeight: '100vh',
+                display: 'flex', 
+                flexDirection: 'column',
+                padding: '24px',
+                margin: 0,
+                borderRadius: 0,
+                boxShadow: 'none'
+              }}
+            >
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '20px'
+            }}>
+              <h3 style={{ margin: '0', color: '#333', fontSize: '1.8rem', fontWeight: 'bold' }}>
+                Resumen - {fechaResumen}
+              </h3>
+              <button
+                onClick={() => setShowResumenModal(false)}
+                style={{
+                  background: '#f44336',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#d32f2f'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#f44336'}
+              >
+                Cerrar (ESC)
+              </button>
+            </div>
+            <div style={{ marginBottom: '20px', color: '#666', fontSize: '1rem', fontWeight: '500' }}>
               Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
             </div>
-            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+            <div style={{ 
+              flex: 1, 
+              overflowY: 'auto', 
+              overflowX: 'hidden',
+              display: 'flex',
+              flexDirection: 'column'
+            }}>
                 {vueltasOrdenadas.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                     No hay planillas para este día
                   </div>
                 ) : (
-                  vueltasOrdenadas.map((vueltaNombre, vueltaIndex) => (
-                    <div key={vueltaNombre} style={{ marginBottom: vueltaIndex < vueltasOrdenadas.length - 1 ? '30px' : '0' }}>
-                      {/* Encabezado de la vuelta */}
-                      <h4 style={{
-                        margin: '0 0 12px 0',
-                        padding: '12px 16px',
-                        backgroundColor: '#0f766e',
-                        color: 'white',
-                        borderRadius: '8px 8px 0 0',
-                        fontSize: '1.1rem',
-                        fontWeight: '600',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      }}>
-                        {vueltaNombre}
-                      </h4>
-                      {/* Tabla de pedidos de esta vuelta */}
-                      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>N° Planilla</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Cantidad</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Zona</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Transporte</th>
-                  </tr>
-                </thead>
-                <tbody>
-                          {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
-                      <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
-                          {pedido.numeroPlanilla}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                                {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
-                              </td>
-                              <td style={{ padding: '12px', color: '#666' }}>
-                                {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
-                              </td>
-                              <td style={{ padding: '12px', color: '#666' }}>
-                                {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
-                        </td>
-                      </tr>
-                          ))}
-                </tbody>
-              </table>
-                    </div>
-                  ))
+                  <div style={{ 
+                    display: 'flex', 
+                    gap: '20px', 
+                    alignItems: 'flex-start',
+                    flex: 1,
+                    minHeight: 0
+                  }}>
+                    {vueltasOrdenadas.map((vueltaNombre) => {
+                      const estaMinimizada = columnasResumenMinimizadas.has(vueltaNombre);
+                      return (
+                      <div 
+                        key={vueltaNombre} 
+                        style={{ 
+                          flex: estaMinimizada ? 0 : 1,
+                          minWidth: estaMinimizada ? '80px' : 0,
+                          width: estaMinimizada ? '80px' : 'auto',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          backgroundColor: '#fafafa',
+                          borderRadius: '8px',
+                          border: '1px solid #e0e0e0',
+                          overflow: 'hidden',
+                          transition: 'all 0.3s ease'
+                        }}
+                      >
+                        {/* Encabezado de la vuelta */}
+                        <div style={{
+                          padding: estaMinimizada ? '14px 8px' : '14px 16px',
+                          backgroundColor: '#2196F3',
+                          color: 'white',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          display: 'flex',
+                          justifyContent: estaMinimizada ? 'center' : 'space-between',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          minHeight: '48px'
+                        }}
+                        onClick={() => toggleColumnaResumen(vueltaNombre)}
+                        >
+                          {!estaMinimizada && (
+                            <h4 style={{
+                              margin: 0,
+                              fontSize: '1rem',
+                              fontWeight: '600'
+                            }}>
+                              {vueltaNombre}
+                            </h4>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleColumnaResumen(vueltaNombre);
+                            }}
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.2)',
+                              border: 'none',
+                              color: 'white',
+                              fontSize: '1.2rem',
+                              cursor: 'pointer',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              minWidth: '28px',
+                              height: '28px',
+                              marginLeft: estaMinimizada ? 0 : 'auto'
+                            }}
+                            onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.3)'}
+                            onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
+                            title={estaMinimizada ? 'Expandir columna' : 'Minimizar columna'}
+                          >
+                            {estaMinimizada ? '▶' : '▼'}
+                          </button>
+                        </div>
+                        {/* Tabla de pedidos de esta vuelta */}
+                        {!estaMinimizada && (
+                        <div style={{ overflowY: 'auto', flex: 1 }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                              <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Planilla</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Cantidad</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Zona</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Transporte</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Despacho</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
+                                <tr key={pedido.id} style={{ borderBottom: '1px solid #eee', backgroundColor: 'white' }}>
+                                  <td style={{ padding: '12px 16px', fontWeight: 'bold', color: '#333', fontSize: '1rem' }}>
+                                    {pedido.numeroPlanilla}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem' }}>
+                                    {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem' }}>
+                                    {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem' }}>
+                                    {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem', fontFamily: 'monospace' }}>
+                                    {getFechaDespachoTexto(pedido)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        )}
+                      </div>
+                    );
+                    })}
+                  </div>
                 )}
-            </div>
-            <div className="modal-actions" style={{ marginTop: '20px' }}>
-              <button
-                type="button"
-                onClick={() => setShowResumenModal(false)}
-                className="btn-secondary"
-              >
-                Cerrar
-              </button>
             </div>
           </div>
         </div>

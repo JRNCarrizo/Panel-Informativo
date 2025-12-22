@@ -11,6 +11,7 @@ import { connectWebSocket, disconnectWebSocket } from '../services/websocketServ
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 import Chat from './Chat';
+import GestionPrioridadCarga from './GestionPrioridadCarga';
 import './AdminPanel.css';
 
 const AdminPanel = () => {
@@ -94,6 +95,7 @@ const AdminPanel = () => {
   const [showResumenModal, setShowResumenModal] = useState(false);
   const [pedidosResumen, setPedidosResumen] = useState([]);
   const [fechaResumen, setFechaResumen] = useState('');
+  const [columnasResumenMinimizadas, setColumnasResumenMinimizadas] = useState(new Set());
   // Estado para el chat
   const [showChat, setShowChat] = useState(false);
   const [cantidadMensajesNoLeidos, setCantidadMensajesNoLeidos] = useState(0);
@@ -135,6 +137,22 @@ const AdminPanel = () => {
   const [showModalDetalle, setShowModalDetalle] = useState(false);
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
   const [filtroEstadoPorDia, setFiltroEstadoPorDia] = useState(new Map()); // Mapa: fecha -> filtro seleccionado
+  // Estado para rastrear cantidad de planillas sin orden (para el indicador de Prioridad de Carga)
+  const [cantidadPlanillasSinOrden, setCantidadPlanillasSinOrden] = useState(0);
+
+  // Función para cargar cantidad de planillas sin orden
+  const cargarCantidadPlanillasSinOrden = async () => {
+    try {
+      const response = await pedidoService.obtenerPendientesSinOrden();
+      setCantidadPlanillasSinOrden((response.data || []).length);
+    } catch (err) {
+      console.error('Error al cargar cantidad de planillas sin orden:', err);
+      // Si hay error 403, puede ser que no tenga permisos, no es crítico
+      if (err.response?.status !== 403) {
+        setCantidadPlanillasSinOrden(0);
+      }
+    }
+  };
 
   useEffect(() => {
     // Solo cargar datos si el usuario está autenticado
@@ -143,10 +161,15 @@ const AdminPanel = () => {
     }
 
     cargarDatos();
+    // Cargar cantidad de planillas sin orden inicialmente
+    cargarCantidadPlanillasSinOrden();
+    
     const stompClient = connectWebSocket((message) => {
       if (message.tipo === 'eliminado') {
         setPedidos((prev) => prev.filter((p) => p.id !== message.id));
         setTodosLosPedidos((prev) => prev.filter((p) => p.id !== message.id));
+        // Actualizar contador de planillas sin orden
+        cargarCantidadPlanillasSinOrden();
       } else {
         // Recargar pedidos según la pestaña activa
         if (activeTab === 'realizados') {
@@ -173,6 +196,9 @@ const AdminPanel = () => {
             setTodasLasPlanillas(response.data || []);
           }
         }).catch(err => console.error('Error al actualizar todos los pedidos:', err));
+        
+        // Actualizar contador de planillas sin orden cuando hay cambios
+        cargarCantidadPlanillasSinOrden();
       }
     });
 
@@ -409,9 +435,11 @@ const AdminPanel = () => {
     }
   }, [showTransportistaModal]);
 
-  // Enfocar el primer campo cuando se abre el modal de usuarios
+  // Limpiar formulario y enfocar el primer campo cuando se abre el modal de usuarios
   useEffect(() => {
-    if (showUsuarioModal && usernameRef.current) {
+    if (showUsuarioModal) {
+      // Limpiar el formulario al abrir
+      setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
       // Pequeño delay para asegurar que el modal esté completamente renderizado
       setTimeout(() => {
         usernameRef.current?.focus();
@@ -432,6 +460,20 @@ const AdminPanel = () => {
       }, 100);
     }
   }, [showZonaModal, zonaEditando]);
+
+  // Enfocar el primer campo cuando se abre el modal de vueltas
+  useEffect(() => {
+    if (showVueltaModal && vueltaNombreRef.current) {
+      // Pequeño delay para asegurar que el modal esté completamente renderizado
+      setTimeout(() => {
+        vueltaNombreRef.current?.focus();
+        // Seleccionar todo el texto si está editando
+        if (vueltaEditando) {
+          vueltaNombreRef.current?.select();
+        }
+      }, 100);
+    }
+  }, [showVueltaModal, vueltaEditando]);
 
   // Cargar cantidad de mensajes no leídos
   const actualizarCantidadMensajesNoLeidos = async () => {
@@ -568,7 +610,7 @@ const AdminPanel = () => {
           setTransportistaForm({ codigoInterno: '', chofer: '', vehiculo: '' });
         } else if (showUsuarioModal) {
           setShowUsuarioModal(false);
-          setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'ADMIN_PRINCIPAL' });
+          setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
         } else if (showZonaModal) {
           setShowZonaModal(false);
           setZonaForm({ nombre: '' });
@@ -581,6 +623,8 @@ const AdminPanel = () => {
           setShowChat(false);
         } else if (showModalDetalle) {
           cerrarModalDetalle();
+        } else if (showResumenModal) {
+          setShowResumenModal(false);
         } else if (mostrarSugerenciasZona) {
           setMostrarSugerenciasZona(false);
         } else if (mostrarSugerenciasVuelta) {
@@ -593,7 +637,7 @@ const AdminPanel = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal, showChat, showModalDetalle]);
+  }, [showModal, showTransportistaModal, showUsuarioModal, showZonaModal, showVueltaModal, showChat, showModalDetalle, showResumenModal]);
 
   // Navegación con flechas izquierda/derecha entre pestañas
   useEffect(() => {
@@ -617,7 +661,7 @@ const AdminPanel = () => {
       }
 
       // Navegación con flechas izquierda/derecha entre pestañas
-      const tabs = ['pedidos', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'roles-asignados'];
+      const tabs = ['pedidos', 'prioridad-carga', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'roles-asignados'];
       const currentIndex = tabs.indexOf(activeTab);
 
       if (event.key === 'ArrowLeft' && currentIndex > 0) {
@@ -730,20 +774,16 @@ const AdminPanel = () => {
         return; // NO hacer preventDefault ni nada, solo retornar
       }
 
-      // No navegar si estamos en modo navegación de sub-pestañas o registros en "En Preparación"
-      if (activeTab === 'en-preparacion' && (enModoNavegacionSubPestanas || enModoNavegacionRegistros)) {
-        return;
-      }
       // No navegar si estamos en modo navegación de días o registros en "Realizados"
       if (activeTab === 'realizados' && (enModoNavegacionDias || enModoNavegacionRegistrosRealizados)) {
           return;
         }
 
-      const tabs = ['pedidos', 'realizados', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'roles-asignados'];
+      const tabs = ['pedidos', 'prioridad-carga', 'transportistas', 'zonas', 'vueltas', 'usuarios', 'roles-asignados'];
       const currentIndex = tabs.indexOf(activeTab);
 
-      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros ni de sub-pestañas)
-      if (!enModoNavegacionSubPestanas && !enModoNavegacionRegistros && !enModoNavegacionDias && !enModoNavegacionRegistrosRealizados && !isInputFocused) {
+      // Navegación normal con flechas izquierda/derecha entre pestañas (solo si NO estamos en modo navegación de registros)
+      if (!enModoNavegacionDias && !enModoNavegacionRegistrosRealizados && !isInputFocused) {
       if (event.key === 'ArrowLeft' && currentIndex > 0) {
           event.preventDefault();
         setActiveTab(tabs[currentIndex - 1]);
@@ -939,6 +979,8 @@ const AdminPanel = () => {
       // Recargar zonas y vueltas por si se crearon nuevas
       cargarZonas();
       cargarVueltas();
+      // Actualizar contador de planillas sin orden
+      cargarCantidadPlanillasSinOrden();
     } catch (error) {
       alert(error.response?.data || 'Error al crear pedido');
     }
@@ -1042,7 +1084,7 @@ const AdminPanel = () => {
       const api = (await import('../config/axios')).default;
       await api.post('/usuarios', usuarioForm);
       setShowUsuarioModal(false);
-      setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'ADMIN_PRINCIPAL' });
+      setUsuarioForm({ username: '', password: '', nombreCompleto: '', rol: 'PLANILLERO' });
       cargarUsuarios();
       alert('Usuario creado exitosamente');
     } catch (error) {
@@ -1278,6 +1320,38 @@ const AdminPanel = () => {
     setShowModalTransportistasVueltas(false);
     setTransportistasVueltas([]);
     setFechasExpandidas(new Set());
+  };
+
+  // Función para abrir modal de detalle de planilla desde Transportes y Vueltas
+  const abrirModalDetalleDesdeVuelta = async (transportistaNombre, vueltaNombre, fechaEntrega) => {
+    try {
+      // Buscar la planilla que corresponda a estos datos en todasLasPlanillas primero
+      let planillaEncontrada = todasLasPlanillas.find(pedido => 
+        (pedido.transportistaNombre === transportistaNombre || pedido.transportista === transportistaNombre) &&
+        pedido.vueltaNombre === vueltaNombre &&
+        pedido.fechaEntrega === fechaEntrega
+      );
+      
+      // Si no se encuentra en el cache, buscar en el servidor
+      if (!planillaEncontrada) {
+        const response = await pedidoService.obtenerTodos();
+        const todasLasPlanillas = response.data || [];
+        planillaEncontrada = todasLasPlanillas.find(pedido => 
+          (pedido.transportistaNombre === transportistaNombre || pedido.transportista === transportistaNombre) &&
+          pedido.vueltaNombre === vueltaNombre &&
+          pedido.fechaEntrega === fechaEntrega
+        );
+      }
+      
+      if (planillaEncontrada) {
+        abrirModalDetalle(planillaEncontrada);
+      } else {
+        alert('No se encontró la planilla correspondiente');
+      }
+    } catch (error) {
+      console.error('Error al buscar la planilla:', error);
+      alert('Error al buscar la planilla');
+    }
   };
 
   // Usar useMemo para estabilizar pedidosAgrupadosPorDia
@@ -1657,6 +1731,35 @@ const AdminPanel = () => {
           Planillas
         </button>
         <button
+          className={activeTab === 'prioridad-carga' ? 'active' : ''}
+          onClick={() => setActiveTab('prioridad-carga')}
+          style={{ position: 'relative' }}
+        >
+          Prioridad de Carga
+          {cantidadPlanillasSinOrden > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: '-8px',
+                right: '-8px',
+                backgroundColor: '#F44336',
+                color: 'white',
+                borderRadius: '50%',
+                width: '24px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              }}
+            >
+              {cantidadPlanillasSinOrden > 99 ? '99+' : cantidadPlanillasSinOrden}
+            </span>
+          )}
+        </button>
+        <button
           className={activeTab === 'transportistas' ? 'active' : ''}
           onClick={() => setActiveTab('transportistas')}
         >
@@ -2001,9 +2104,8 @@ const AdminPanel = () => {
                     return (
             <div style={{
                         padding: '20px',
-                        backgroundColor: '#f8fafc',
-                        backgroundImage: 'linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)',
-                    display: 'grid',
+                        backgroundColor: '#f1f5f9',
+                        display: 'grid',
                         gridTemplateColumns: 'repeat(2, 1fr)',
                         gap: '16px'
                       }}>
@@ -2023,11 +2125,11 @@ const AdminPanel = () => {
                           <div 
                             key={planilla.id} 
                   style={{
-                              backgroundColor: 'white',
+                              backgroundColor: '#ffffff',
                               borderRadius: '10px',
-                              border: '1px solid #e2e8f0',
+                              border: '1px solid #d1d5db',
                               overflow: 'hidden',
-                              boxShadow: '0 2px 6px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06)',
+                              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.08)',
                               transition: 'all 0.3s ease',
                     cursor: 'pointer',
                   }}
@@ -2088,23 +2190,64 @@ const AdminPanel = () => {
                                     {planilla.vueltaNombre && <span>• {planilla.vueltaNombre}</span>}
                                     {planilla.cantidad && <span>• {planilla.cantidad} total</span>}
                       </div>
+                      {planilla.fechaEntrega && (() => {
+                        // Función auxiliar para parsear fecha sin problemas de zona horaria
+                        const parseFechaLocal = (fechaString) => {
+                          if (!fechaString) return null;
+                          if (fechaString instanceof Date) return fechaString;
+                          const parts = fechaString.split('-');
+                          if (parts.length !== 3) return new Date(fechaString);
+                          const year = parseInt(parts[0], 10);
+                          const month = parseInt(parts[1], 10) - 1;
+                          const day = parseInt(parts[2], 10);
+                          return new Date(year, month, day);
+                        };
+
+                        const hoy = new Date();
+                        hoy.setHours(0, 0, 0, 0);
+                        const fechaEntrega = parseFechaLocal(planilla.fechaEntrega);
+                        if (!fechaEntrega) return null;
+                        fechaEntrega.setHours(0, 0, 0, 0);
+                        const diffTime = fechaEntrega - hoy;
+                        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                        
+                        let textoDespacho;
+                        if (diffDays === 0) {
+                          textoDespacho = 'Sale hoy';
+                        } else if (diffDays === 1) {
+                          textoDespacho = 'Sale mañana';
+                        } else {
+                          const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                          const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                          const year = String(fechaEntrega.getFullYear()).slice(-2);
+                          textoDespacho = `Sale ${day}/${month}/${year}`;
+                        }
+
+                        return (
+                          <div style={{ 
+                            marginTop: '8px',
+                            display: 'inline-block'
+                          }}>
+                            <span style={{ 
+                              fontWeight: '600', 
+                              color: '#2563eb',
+                              backgroundColor: '#eff6ff',
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              fontSize: '0.85rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              border: '1px solid #bfdbfe'
+                            }}>
+                              📅 {textoDespacho}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span
-                                  style={{
-                                    backgroundColor: getEstadoColor(planilla),
-                                    color: 'white',
-                                    padding: '4px 10px',
-                                    borderRadius: '6px',
-                                    fontSize: '0.8rem',
-                                    fontWeight: '600',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {getEstadoTexto(planilla)}
-                  </span>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
                     <button
                                     onClick={() => abrirModalDetalle(planilla)}
                                     style={{
@@ -2127,6 +2270,21 @@ const AdminPanel = () => {
                                   >
                                     👁️ Ver
                                   </button>
+                  <span
+                                  style={{
+                                    backgroundColor: getEstadoColor(planilla),
+                                    color: 'white',
+                                    padding: '4px 10px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.8rem',
+                                    fontWeight: '600',
+                                    whiteSpace: 'nowrap',
+                                    width: '100%',
+                                    textAlign: 'center',
+                                  }}
+                                >
+                                  {getEstadoTexto(planilla)}
+                  </span>
                                   {planilla.estado === 'PENDIENTE' && (
                                     <button
                                       onClick={() => handleEliminarPedido(planilla.id)}
@@ -2141,21 +2299,20 @@ const AdminPanel = () => {
                         fontWeight: '600', 
                                         width: '100%',
                                       }}
-                                      onMouseEnter={(e) => {
-                                        e.currentTarget.style.backgroundColor = '#e5e7eb';
-                                        e.currentTarget.style.color = '#dc2626';
-                                        e.currentTarget.style.borderColor = '#dc2626';
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.backgroundColor = '#f3f4f6';
-                                        e.currentTarget.style.color = '#6b7280';
-                                        e.currentTarget.style.borderColor = '#e5e7eb';
-                                      }}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.backgroundColor = '#e5e7eb';
+                                      e.currentTarget.style.color = '#dc2626';
+                                      e.currentTarget.style.borderColor = '#dc2626';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.backgroundColor = '#f3f4f6';
+                                      e.currentTarget.style.color = '#6b7280';
+                                      e.currentTarget.style.borderColor = '#e5e7eb';
+                                    }}
                     >
                       🗑️ Eliminar
                     </button>
                                   )}
-                      </div>
                       </div>
                     </div>
                 </div>
@@ -2487,13 +2644,51 @@ const AdminPanel = () => {
                                   marginTop: '4px',
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: '8px'
+                                  gap: '8px',
+                                  flexWrap: 'wrap'
                                 }}>
-                                  <span>🕐 {pedido.fechaCreacion && new Date(pedido.fechaCreacion).toLocaleTimeString('es-AR', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: false,
-                                  })}</span>
+                                  {pedido.fechaEntradaColaPrioridad && (
+                                    <span>🕐 {new Date(pedido.fechaEntradaColaPrioridad).toLocaleTimeString('es-AR', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: false,
+                                    })}</span>
+                                  )}
+                                  {pedido.fechaEntrega && (() => {
+                                    // Función auxiliar para parsear fecha sin problemas de zona horaria
+                                    const parseFechaLocal = (fechaString) => {
+                                      if (!fechaString) return null;
+                                      if (fechaString instanceof Date) return fechaString;
+                                      const parts = fechaString.split('-');
+                                      if (parts.length !== 3) return new Date(fechaString);
+                                      const year = parseInt(parts[0], 10);
+                                      const month = parseInt(parts[1], 10) - 1;
+                                      const day = parseInt(parts[2], 10);
+                                      return new Date(year, month, day);
+                                    };
+
+                                    const hoy = new Date();
+                                    hoy.setHours(0, 0, 0, 0);
+                                    const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+                                    if (!fechaEntrega) return null;
+                                    fechaEntrega.setHours(0, 0, 0, 0);
+                                    const diffTime = fechaEntrega - hoy;
+                                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                                    
+                                    let textoDespacho;
+                                    if (diffDays === 0) {
+                                      textoDespacho = 'Sale hoy';
+                                    } else if (diffDays === 1) {
+                                      textoDespacho = 'Sale mañana';
+                                    } else {
+                                      const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                                      const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                                      const year = String(fechaEntrega.getFullYear()).slice(-2);
+                                      textoDespacho = `Sale ${day}/${month}/${year}`;
+                                    }
+
+                                    return <span>{textoDespacho}</span>;
+                                  })()}
                                 </div>
                               </div>
                             </div>
@@ -2550,6 +2745,45 @@ const AdminPanel = () => {
                                 <div className="info-label">👥 Equipo</div>
                                 <div className="info-value">{pedido.grupoNombre || 'Sin asignar'}</div>
                               </div>
+                              {pedido.fechaEntrega && (
+                                <div className="info-item">
+                                  <div className="info-label">📅 Despacho</div>
+                                  <div className="info-value">
+                                    {(() => {
+                                      // Función auxiliar para parsear fecha sin problemas de zona horaria
+                                      const parseFechaLocal = (fechaString) => {
+                                        if (!fechaString) return null;
+                                        if (fechaString instanceof Date) return fechaString;
+                                        const parts = fechaString.split('-');
+                                        if (parts.length !== 3) return new Date(fechaString);
+                                        const year = parseInt(parts[0], 10);
+                                        const month = parseInt(parts[1], 10) - 1;
+                                        const day = parseInt(parts[2], 10);
+                                        return new Date(year, month, day);
+                                      };
+
+                                      const hoy = new Date();
+                                      hoy.setHours(0, 0, 0, 0);
+                                      const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+                                      if (!fechaEntrega) return 'Fecha inválida';
+                                      fechaEntrega.setHours(0, 0, 0, 0);
+                                      const diffTime = fechaEntrega - hoy;
+                                      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                                      
+                                      if (diffDays === 0) {
+                                        return 'Sale hoy';
+                                      } else if (diffDays === 1) {
+                                        return 'Sale mañana';
+                                      } else {
+                                        const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                                        const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                                        const year = String(fechaEntrega.getFullYear()).slice(-2);
+                                        return `Sale ${day}/${month}/${year}`;
+                                      }
+                                    })()}
+                                  </div>
+                                </div>
+                              )}
                               <div className="info-item">
                                 <div className="info-label">📋 Estado</div>
                                 <span
@@ -2561,100 +2795,190 @@ const AdminPanel = () => {
                               </div>
                             </div>
                             
-                            {pedido.fechaActualizacion && (
+                            {/* Timestamps de etapas */}
+                            {(pedido.fechaPreparacion || pedido.fechaControl || pedido.fechaPendienteCarga || pedido.fechaFinalizado) && (
                               <div style={{
                                 display: 'flex',
+                                flexDirection: 'column',
                                 gap: '12px',
                                 marginTop: '8px'
                               }}>
-                                {pedido.fechaPendienteCarga && (
+                                {/* Primera fila: Preparación y Control */}
+                                {(pedido.fechaPreparacion || pedido.fechaControl) && (
                                   <div style={{
-                                    flex: 1,
-                                    padding: '12px',
-                                    background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
-                                    borderRadius: '8px',
-                                    border: '1px solid #ffb74d'
+                                    display: 'flex',
+                                    gap: '12px'
                                   }}>
-                                    <div style={{ 
-                                      fontSize: '0.85rem', 
-                                      fontWeight: '600', 
-                                      color: '#E65100',
-                                      marginBottom: '4px'
-                                    }}>
-                                      ✅ Controlado
-                                    </div>
-                                    <div style={{ 
-                                      fontSize: '0.9rem', 
-                                      color: '#F57C00',
-                                      fontWeight: '500',
-                                      marginBottom: '4px'
-                                    }}>
-                                      {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
-                                        year: 'numeric',
-                                        month: '2-digit',
-                                        day: '2-digit',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: false,
-                                })}
-                                    </div>
-                                    {pedido.controladoPor && (
-                                      <div style={{ 
-                                        fontSize: '0.85rem', 
-                                        color: '#E65100',
-                                        fontWeight: '500',
-                                        marginTop: '4px',
-                                        paddingTop: '4px',
-                                        borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                                    {pedido.fechaPreparacion && (
+                                      <div style={{
+                                        flex: 1,
+                                        padding: '12px',
+                                        background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
+                                        borderRadius: '8px',
+                                        border: '1px solid #90caf9'
                                       }}>
-                                        <strong>Controlado por:</strong> {pedido.controladoPor}
+                                        <div style={{ 
+                                          fontSize: '0.85rem', 
+                                          fontWeight: '600', 
+                                          color: '#1565c0',
+                                          marginBottom: '4px'
+                                        }}>
+                                          ⏰ Preparación
+                                        </div>
+                                        <div style={{ 
+                                          fontSize: '0.9rem', 
+                                          color: '#1976d2',
+                                          fontWeight: '500'
+                                        }}>
+                                          {new Date(pedido.fechaPreparacion).toLocaleString('es-AR', {
+                                            year: 'numeric',
+                                            month: '2-digit',
+                                            day: '2-digit',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            hour12: false,
+                                          })}
+                                        </div>
                                       </div>
+                                    )}
+                                    {pedido.fechaControl && (
+                                      <div style={{
+                                        flex: 1,
+                                        padding: '12px',
+                                        background: 'linear-gradient(135deg, #fff9c4 0%, #fff59d 100%)',
+                                        borderRadius: '8px',
+                                        border: '1px solid #fff176'
+                                      }}>
+                                        <div style={{ 
+                                          fontSize: '0.85rem', 
+                                          fontWeight: '600', 
+                                          color: '#f57f17',
+                                          marginBottom: '4px'
+                                        }}>
+                                          🔍 Control
+                                        </div>
+                                        <div style={{ 
+                                          fontSize: '0.9rem', 
+                                          color: '#f9a825',
+                                          fontWeight: '500'
+                                        }}>
+                                          {new Date(pedido.fechaControl).toLocaleString('es-AR', {
+                                            year: 'numeric',
+                                            month: '2-digit',
+                                            day: '2-digit',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            hour12: false,
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {!pedido.fechaPreparacion && pedido.fechaControl && (
+                                      <div style={{ flex: 1 }}></div>
                                     )}
                                   </div>
                                 )}
-                                <div style={{
-                                  flex: 1,
-                                  padding: '12px',
-                                  background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                                  borderRadius: '8px',
-                                  border: '1px solid #86efac'
-                                }}>
-                                  <div style={{ 
-                                    fontSize: '0.85rem', 
-                                    fontWeight: '600', 
-                                    color: '#166534',
-                                    marginBottom: '4px'
+                                {/* Segunda fila: Pendiente de Carga y Finalizado */}
+                                {(pedido.fechaPendienteCarga || pedido.fechaFinalizado) && (
+                                  <div style={{
+                                    display: 'flex',
+                                    gap: '12px'
                                   }}>
-                                    ✅ Finalizado
+                                    {pedido.fechaPendienteCarga && (
+                                      <div style={{
+                                        flex: 1,
+                                        padding: '12px',
+                                        background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                                        borderRadius: '8px',
+                                        border: '1px solid #ffb74d'
+                                      }}>
+                                        <div style={{ 
+                                          fontSize: '0.85rem', 
+                                          fontWeight: '600', 
+                                          color: '#E65100',
+                                          marginBottom: '4px'
+                                        }}>
+                                          ✅ Pendiente de Carga
+                                        </div>
+                                        <div style={{ 
+                                          fontSize: '0.9rem', 
+                                          color: '#F57C00',
+                                          fontWeight: '500',
+                                          marginBottom: '4px'
+                                        }}>
+                                          {new Date(pedido.fechaPendienteCarga).toLocaleString('es-AR', {
+                                            year: 'numeric',
+                                            month: '2-digit',
+                                            day: '2-digit',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            hour12: false,
+                                          })}
+                                        </div>
+                                        {pedido.controladoPor && (
+                                          <div style={{ 
+                                            fontSize: '0.85rem', 
+                                            color: '#E65100',
+                                            fontWeight: '500',
+                                            marginTop: '4px',
+                                            paddingTop: '4px',
+                                            borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                                          }}>
+                                            <strong>Controlado por:</strong> {pedido.controladoPor}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                    {pedido.fechaFinalizado && (
+                                      <div style={{
+                                        flex: 1,
+                                        padding: '12px',
+                                        background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                                        borderRadius: '8px',
+                                        border: '1px solid #86efac'
+                                      }}>
+                                        <div style={{ 
+                                          fontSize: '0.85rem', 
+                                          fontWeight: '600', 
+                                          color: '#166534',
+                                          marginBottom: '4px'
+                                        }}>
+                                          ✅ Finalizado
+                                        </div>
+                                        <div style={{ 
+                                          fontSize: '0.9rem', 
+                                          color: '#15803d',
+                                          fontWeight: '500',
+                                          marginBottom: '4px'
+                                        }}>
+                                          {new Date(pedido.fechaFinalizado).toLocaleString('es-AR', {
+                                            year: 'numeric',
+                                            month: '2-digit',
+                                            day: '2-digit',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            hour12: false,
+                                          })}
+                                        </div>
+                                        {pedido.finalizadoPor && (
+                                          <div style={{ 
+                                            fontSize: '0.85rem', 
+                                            color: '#15803d',
+                                            fontWeight: '500',
+                                            marginTop: '4px',
+                                            paddingTop: '4px',
+                                            borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                                          }}>
+                                            <strong>Finalizado por:</strong> {pedido.finalizadoPor}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                    {!pedido.fechaPendienteCarga && pedido.fechaFinalizado && (
+                                      <div style={{ flex: 1 }}></div>
+                                    )}
                                   </div>
-                                  <div style={{ 
-                                    fontSize: '0.9rem', 
-                                    color: '#15803d',
-                                    fontWeight: '500',
-                                    marginBottom: '4px'
-                                  }}>
-                                  {new Date(pedido.fechaActualizacion).toLocaleString('es-AR', {
-                                    year: 'numeric',
-                                    month: '2-digit',
-                                    day: '2-digit',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: false,
-                                  })}
-                                  </div>
-                                  {pedido.finalizadoPor && (
-                                    <div style={{ 
-                                      fontSize: '0.85rem', 
-                                      color: '#15803d',
-                                      fontWeight: '500',
-                                      marginTop: '4px',
-                                      paddingTop: '4px',
-                                      borderTop: '1px solid rgba(21, 128, 61, 0.2)'
-                                    }}>
-                                      <strong>Finalizado por:</strong> {pedido.finalizadoPor}
-                                    </div>
-                                  )}
-                                </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2702,6 +3026,17 @@ const AdminPanel = () => {
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'prioridad-carga' && (
+        <div className="content-section">
+          <GestionPrioridadCarga
+            onContadorCambio={(nuevaCantidad) => {
+              // Actualizar el contador inmediatamente cuando cambia desde GestionPrioridadCarga
+              setCantidadPlanillasSinOrden(nuevaCantidad);
+            }}
+          />
         </div>
       )}
 
@@ -4043,6 +4378,7 @@ const AdminPanel = () => {
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, username: e.target.value })
                   }
+                  autoComplete="off"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -4079,6 +4415,7 @@ const AdminPanel = () => {
                   onChange={(e) =>
                     setUsuarioForm({ ...usuarioForm, password: e.target.value })
                   }
+                  autoComplete="new-password"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -4283,8 +4620,55 @@ const AdminPanel = () => {
 
       {/* Modal de Resumen */}
       {showResumenModal && (() => {
+        // Función para toggle de minimizar/maximizar columna
+        const toggleColumnaResumen = (vueltaNombre) => {
+          setColumnasResumenMinimizadas(prev => {
+            const nuevo = new Set(prev);
+            if (nuevo.has(vueltaNombre)) {
+              nuevo.delete(vueltaNombre);
+            } else {
+              nuevo.add(vueltaNombre);
+            }
+            return nuevo;
+          });
+        };
+
+        // Función auxiliar para parsear fecha sin problemas de zona horaria
+        const parseFechaLocal = (fechaString) => {
+          if (!fechaString) return null;
+          if (fechaString instanceof Date) return fechaString;
+          const parts = fechaString.split('-');
+          if (parts.length !== 3) return new Date(fechaString);
+          const year = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10) - 1;
+          const day = parseInt(parts[2], 10);
+          return new Date(year, month, day);
+        };
+
+        // Función para obtener la fecha de despacho en formato DD/MM/YY
+        const getFechaDespachoTexto = (pedido) => {
+          if (!pedido.fechaEntrega) return '-';
+          const fechaEntrega = parseFechaLocal(pedido.fechaEntrega);
+          if (!fechaEntrega) return '-';
+          const day = String(fechaEntrega.getDate()).padStart(2, '0');
+          const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+          const year = String(fechaEntrega.getFullYear()).slice(-2);
+          return `${day}/${month}/${year}`;
+        };
+
+        // Ordenar pedidos por fecha de despacho (más antiguo primero, es decir, orden cronológico)
+        const pedidosOrdenados = [...pedidosResumen].sort((a, b) => {
+          const fechaA = a.fechaEntrega ? parseFechaLocal(a.fechaEntrega)?.getTime() || 0 : 0;
+          const fechaB = b.fechaEntrega ? parseFechaLocal(b.fechaEntrega)?.getTime() || 0 : 0;
+          // Si no tienen fecha, ponerlos al final
+          if (fechaA === 0 && fechaB === 0) return 0;
+          if (fechaA === 0) return 1;
+          if (fechaB === 0) return -1;
+          return fechaA - fechaB; // De más antiguo a más reciente (orden cronológico)
+        });
+
         // Agrupar pedidos por vuelta
-        const pedidosAgrupadosPorVuelta = pedidosResumen.reduce((acc, pedido) => {
+        const pedidosAgrupadosPorVuelta = pedidosOrdenados.reduce((acc, pedido) => {
           const vueltaNombre = pedido.vueltaNombre || 'Sin vuelta';
           if (!acc[vueltaNombre]) {
             acc[vueltaNombre] = [];
@@ -4293,82 +4677,232 @@ const AdminPanel = () => {
           return acc;
         }, {});
 
-        // Ordenar las vueltas (Sin vuelta al final)
+        // Ordenar las vueltas por fecha de creación más antigua de sus pedidos (orden de creación)
         const vueltasOrdenadas = Object.keys(pedidosAgrupadosPorVuelta).sort((a, b) => {
+          // "Sin vuelta" siempre al final
           if (a === 'Sin vuelta') return 1;
           if (b === 'Sin vuelta') return -1;
-          return a.localeCompare(b);
+          
+          // Obtener la fecha de creación más antigua de cada vuelta (cuando se creó el primer pedido de esa vuelta)
+          const pedidosA = pedidosAgrupadosPorVuelta[a];
+          const pedidosB = pedidosAgrupadosPorVuelta[b];
+          
+          // Si alguna vuelta no tiene pedidos, ponerla al final
+          if (pedidosA.length === 0 && pedidosB.length === 0) return 0;
+          if (pedidosA.length === 0) return 1;
+          if (pedidosB.length === 0) return -1;
+          
+          const fechasCreacionA = pedidosA
+            .map(p => p.fechaCreacion ? new Date(p.fechaCreacion).getTime() : Infinity)
+            .filter(t => t !== Infinity);
+          const fechasCreacionB = pedidosB
+            .map(p => p.fechaCreacion ? new Date(p.fechaCreacion).getTime() : Infinity)
+            .filter(t => t !== Infinity);
+          
+          // Si no tienen fechas, mantener el orden original
+          if (fechasCreacionA.length === 0 && fechasCreacionB.length === 0) return 0;
+          if (fechasCreacionA.length === 0) return 1;
+          if (fechasCreacionB.length === 0) return -1;
+          
+          // Ordenar por la fecha de creación más antigua (más antiguas primero = creadas primero)
+          const fechaMasAntiguaA = Math.min(...fechasCreacionA);
+          const fechaMasAntiguaB = Math.min(...fechasCreacionB);
+          
+          return fechaMasAntiguaA - fechaMasAntiguaB;
         });
 
         return (
-        <div className="modal-overlay" onClick={() => setShowResumenModal(false)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px', maxHeight: '80vh', overflow: 'auto' }}>
-            <h3>Resumen - {fechaResumen}</h3>
-            <div style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
+        <div 
+          className="modal-overlay" 
+          onClick={() => setShowResumenModal(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            zIndex: 2000,
+            padding: 0,
+            margin: 0
+          }}
+        >
+            <div 
+              className="modal" 
+              onClick={(e) => e.stopPropagation()} 
+              style={{ 
+                width: '100%',
+                height: '100vh',
+                maxWidth: '100%',
+                maxHeight: '100vh',
+                display: 'flex', 
+                flexDirection: 'column',
+                padding: '24px',
+                margin: 0,
+                borderRadius: 0,
+                boxShadow: 'none'
+              }}
+            >
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              marginBottom: '20px'
+            }}>
+              <h3 style={{ margin: '0', color: '#333', fontSize: '1.8rem', fontWeight: 'bold' }}>
+                Resumen - {fechaResumen}
+              </h3>
+              <button
+                onClick={() => setShowResumenModal(false)}
+                style={{
+                  background: '#f44336',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '10px 20px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#d32f2f'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#f44336'}
+              >
+                Cerrar (ESC)
+              </button>
+            </div>
+            <div style={{ marginBottom: '20px', color: '#666', fontSize: '1rem', fontWeight: '500' }}>
               Total: {pedidosResumen.length} {pedidosResumen.length === 1 ? 'planilla' : 'planillas'}
             </div>
-            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+            <div style={{ 
+              flex: 1, 
+              overflowY: 'auto', 
+              overflowX: 'hidden',
+              display: 'flex',
+              flexDirection: 'column'
+            }}>
                 {vueltasOrdenadas.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
                     No hay planillas para este día
                   </div>
                 ) : (
-                  vueltasOrdenadas.map((vueltaNombre, vueltaIndex) => (
-                    <div key={vueltaNombre} style={{ marginBottom: vueltaIndex < vueltasOrdenadas.length - 1 ? '30px' : '0' }}>
-                      {/* Encabezado de la vuelta */}
-                      <h4 style={{
-                        margin: '0 0 12px 0',
-                        padding: '12px 16px',
-                        backgroundColor: '#2196F3',
-                        color: 'white',
-                        borderRadius: '8px 8px 0 0',
-                        fontSize: '1.1rem',
-                        fontWeight: '600',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      }}>
-                        {vueltaNombre}
-                      </h4>
-                      {/* Tabla de pedidos de esta vuelta */}
-                      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>N° Planilla</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Cantidad</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Zona</th>
-                            <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.9rem' }}>Transporte</th>
-                  </tr>
-                </thead>
-                <tbody>
-                          {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
-                      <tr key={pedido.id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: '12px', fontWeight: 'bold', color: '#333' }}>
-                          {pedido.numeroPlanilla}
-                        </td>
-                        <td style={{ padding: '12px', color: '#666' }}>
-                                {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
-                              </td>
-                              <td style={{ padding: '12px', color: '#666' }}>
-                                {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
-                              </td>
-                              <td style={{ padding: '12px', color: '#666' }}>
-                                {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
-                        </td>
-                      </tr>
-                          ))}
-                </tbody>
-              </table>
-                    </div>
-                  ))
+                  <div style={{ 
+                    display: 'flex', 
+                    gap: '20px', 
+                    alignItems: 'flex-start',
+                    flex: 1,
+                    minHeight: 0
+                  }}>
+                    {vueltasOrdenadas.map((vueltaNombre) => {
+                      const estaMinimizada = columnasResumenMinimizadas.has(vueltaNombre);
+                      return (
+                      <div 
+                        key={vueltaNombre} 
+                        style={{ 
+                          flex: estaMinimizada ? 0 : 1,
+                          minWidth: estaMinimizada ? '80px' : 0,
+                          width: estaMinimizada ? '80px' : 'auto',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          backgroundColor: '#fafafa',
+                          borderRadius: '8px',
+                          border: '1px solid #e0e0e0',
+                          overflow: 'hidden',
+                          transition: 'all 0.3s ease'
+                        }}
+                      >
+                        {/* Encabezado de la vuelta */}
+                        <div style={{
+                          padding: estaMinimizada ? '14px 8px' : '14px 16px',
+                          backgroundColor: '#2196F3',
+                          color: 'white',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          display: 'flex',
+                          justifyContent: estaMinimizada ? 'center' : 'space-between',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          minHeight: '48px'
+                        }}
+                        onClick={() => toggleColumnaResumen(vueltaNombre)}
+                        >
+                          {!estaMinimizada && (
+                            <h4 style={{
+                              margin: 0,
+                              fontSize: '1rem',
+                              fontWeight: '600'
+                            }}>
+                              {vueltaNombre}
+                            </h4>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleColumnaResumen(vueltaNombre);
+                            }}
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.2)',
+                              border: 'none',
+                              color: 'white',
+                              fontSize: '1.2rem',
+                              cursor: 'pointer',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              minWidth: '28px',
+                              height: '28px',
+                              marginLeft: estaMinimizada ? 0 : 'auto'
+                            }}
+                            onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.3)'}
+                            onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
+                            title={estaMinimizada ? 'Expandir columna' : 'Minimizar columna'}
+                          >
+                            {estaMinimizada ? '▶' : '▼'}
+                          </button>
+                        </div>
+                        {/* Tabla de pedidos de esta vuelta */}
+                        {!estaMinimizada && (
+                        <div style={{ overflowY: 'auto', flex: 1 }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                              <tr style={{ backgroundColor: '#f5f5f5', borderBottom: '2px solid #ddd' }}>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Planilla</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Cantidad</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Zona</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Transporte</th>
+                                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #ddd', fontSize: '0.95rem', fontWeight: '600' }}>Despacho</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pedidosAgrupadosPorVuelta[vueltaNombre].map((pedido) => (
+                                <tr key={pedido.id} style={{ borderBottom: '1px solid #eee', backgroundColor: 'white' }}>
+                                  <td style={{ padding: '12px 16px', fontWeight: 'bold', color: '#333', fontSize: '1rem' }}>
+                                    {pedido.numeroPlanilla}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem' }}>
+                                    {pedido.cantidad || <span style={{ color: '#999', fontStyle: 'italic' }}>-</span>}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem' }}>
+                                    {pedido.zonaNombre || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin zona</span>}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem' }}>
+                                    {pedido.transportistaNombre || pedido.transportista || <span style={{ color: '#999', fontStyle: 'italic' }}>Sin transporte</span>}
+                                  </td>
+                                  <td style={{ padding: '12px 16px', color: '#666', fontSize: '1rem', fontFamily: 'monospace' }}>
+                                    {getFechaDespachoTexto(pedido)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        )}
+                      </div>
+                    );
+                    })}
+                  </div>
                 )}
-            </div>
-            <div className="modal-actions" style={{ marginTop: '20px' }}>
-              <button
-                type="button"
-                onClick={() => setShowResumenModal(false)}
-                className="btn-secondary"
-              >
-                Cerrar
-              </button>
             </div>
           </div>
         </div>
@@ -4399,7 +4933,7 @@ const AdminPanel = () => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 1000,
+            zIndex: 2000,
           }}
           onClick={cerrarModalDetalle}
         >
@@ -4470,11 +5004,13 @@ const AdminPanel = () => {
                       alignItems: 'center',
                       gap: '8px'
                     }}>
-                      <span>🕐 {pedidoSeleccionado.fechaCreacion && new Date(pedidoSeleccionado.fechaCreacion).toLocaleTimeString('es-AR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })}</span>
+                      {pedidoSeleccionado.fechaEntradaColaPrioridad && (
+                        <span>🕐 {new Date(pedidoSeleccionado.fechaEntradaColaPrioridad).toLocaleTimeString('es-AR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -4531,6 +5067,45 @@ const AdminPanel = () => {
                     <div className="info-label">👥 Equipo</div>
                     <div className="info-value">{pedidoSeleccionado.grupoNombre || 'Sin asignar'}</div>
                   </div>
+                  {pedidoSeleccionado.fechaEntrega && (
+                    <div className="info-item">
+                      <div className="info-label">📅 Despacho</div>
+                      <div className="info-value">
+                        {(() => {
+                          // Función auxiliar para parsear fecha sin problemas de zona horaria
+                          const parseFechaLocal = (fechaString) => {
+                            if (!fechaString) return null;
+                            if (fechaString instanceof Date) return fechaString;
+                            const parts = fechaString.split('-');
+                            if (parts.length !== 3) return new Date(fechaString);
+                            const year = parseInt(parts[0], 10);
+                            const month = parseInt(parts[1], 10) - 1;
+                            const day = parseInt(parts[2], 10);
+                            return new Date(year, month, day);
+                          };
+
+                          const hoy = new Date();
+                          hoy.setHours(0, 0, 0, 0);
+                          const fechaEntrega = parseFechaLocal(pedidoSeleccionado.fechaEntrega);
+                          if (!fechaEntrega) return 'Fecha inválida';
+                          fechaEntrega.setHours(0, 0, 0, 0);
+                          const diffTime = fechaEntrega - hoy;
+                          const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                          
+                          if (diffDays === 0) {
+                            return 'Sale hoy';
+                          } else if (diffDays === 1) {
+                            return 'Sale mañana';
+                          } else {
+                            const day = String(fechaEntrega.getDate()).padStart(2, '0');
+                            const month = String(fechaEntrega.getMonth() + 1).padStart(2, '0');
+                            const year = String(fechaEntrega.getFullYear()).slice(-2);
+                            return `Sale ${day}/${month}/${year}`;
+                          }
+                        })()}
+                      </div>
+                    </div>
+                  )}
                   <div className="info-item">
                     <div className="info-label">📋 Estado</div>
                     <span
@@ -4542,71 +5117,11 @@ const AdminPanel = () => {
                   </div>
                 </div>
 
-                {pedidoSeleccionado.fechaEntrega && (
+                {pedidoSeleccionado.estado === 'EN_PREPARACION' && pedidoSeleccionado.fechaActualizacion && (
                   <div className="info-item" style={{ marginBottom: '16px' }}>
-                    <div className="info-label">📅 Fecha de Despacho</div>
+                    <div className="info-label">⏰ Preparación</div>
                     <div className="info-value">
-                      {(() => {
-                        // Función auxiliar para parsear fecha sin problemas de zona horaria
-                        const parseFechaLocal = (fechaString) => {
-                          if (!fechaString) return null;
-                          if (fechaString instanceof Date) return fechaString;
-                          const parts = fechaString.split('-');
-                          if (parts.length !== 3) return new Date(fechaString);
-                          const year = parseInt(parts[0], 10);
-                          const month = parseInt(parts[1], 10) - 1;
-                          const day = parseInt(parts[2], 10);
-                          return new Date(year, month, day);
-                        };
-
-                        const hoy = new Date();
-                        hoy.setHours(0, 0, 0, 0);
-                        const fechaEntrega = parseFechaLocal(pedidoSeleccionado.fechaEntrega);
-                        if (!fechaEntrega) return 'Fecha inválida';
-                        fechaEntrega.setHours(0, 0, 0, 0);
-                        const diffTime = fechaEntrega - hoy;
-                        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                        
-                        if (diffDays === 0) {
-                          return 'Hoy';
-                        } else if (diffDays === 1) {
-                          return 'Mañana';
-                        } else {
-                          return fechaEntrega.toLocaleDateString('es-AR', {
-                            weekday: 'long',
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric'
-                          });
-                        }
-                      })()}
-                    </div>
-                  </div>
-                )}
-
-                {/* Mostrar timestamps según el estado */}
-                {pedidoSeleccionado.estado === 'EN_PREPARACION' && pedidoSeleccionado.etapaPreparacion === 'PENDIENTE_CARGA' && pedidoSeleccionado.fechaPendienteCarga && (
-                  <div style={{
-                    padding: '12px',
-                    background: 'linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%)',
-                    borderRadius: '8px',
-                    border: '1px solid #80deea',
-                    marginTop: '8px'
-                  }}>
-                    <div style={{ 
-                      fontSize: '0.85rem', 
-                      fontWeight: '600', 
-                      color: '#00838f',
-                      marginBottom: '4px'
-                    }}>
-                      ✅ Controlado
-                    </div>
-                    <div style={{ 
-                      fontSize: '0.9rem', 
-                      color: '#0097a7',
-                      fontWeight: '500'
-                    }}>
-                      {new Date(pedidoSeleccionado.fechaPendienteCarga).toLocaleString('es-AR', {
+                      {new Date(pedidoSeleccionado.fechaActualizacion).toLocaleString('es-AR', {
                         year: 'numeric',
                         month: '2-digit',
                         day: '2-digit',
@@ -4618,100 +5133,190 @@ const AdminPanel = () => {
                   </div>
                 )}
 
-                {pedidoSeleccionado.estado === 'REALIZADO' && pedidoSeleccionado.fechaActualizacion && (
+                {/* Timestamps de etapas */}
+                {(pedidoSeleccionado.fechaPreparacion || pedidoSeleccionado.fechaControl || pedidoSeleccionado.fechaPendienteCarga || pedidoSeleccionado.fechaFinalizado) && (
                   <div style={{
                     display: 'flex',
+                    flexDirection: 'column',
                     gap: '12px',
                     marginTop: '8px'
                   }}>
-                    {pedidoSeleccionado.fechaPendienteCarga && (
+                    {/* Primera fila: Preparación y Control */}
+                    {(pedidoSeleccionado.fechaPreparacion || pedidoSeleccionado.fechaControl) && (
                       <div style={{
-                        flex: 1,
-                        padding: '12px',
-                        background: 'linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%)',
-                        borderRadius: '8px',
-                        border: '1px solid #80deea'
+                        display: 'flex',
+                        gap: '12px'
                       }}>
-                        <div style={{ 
-                          fontSize: '0.85rem', 
-                          fontWeight: '600', 
-                          color: '#00838f',
-                          marginBottom: '4px'
-                        }}>
-                          ✅ Controlado
-                        </div>
-                        <div style={{ 
-                          fontSize: '0.9rem', 
-                          color: '#0097a7',
-                          fontWeight: '500',
-                          marginBottom: '4px'
-                        }}>
-                          {new Date(pedidoSeleccionado.fechaPendienteCarga).toLocaleString('es-AR', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: false,
-                          })}
-                        </div>
-                        {pedidoSeleccionado.controladoPor && (
-                          <div style={{ 
-                            fontSize: '0.85rem', 
-                            color: '#00838f',
-                            fontWeight: '500',
-                            marginTop: '4px',
-                            paddingTop: '4px',
-                            borderTop: '1px solid rgba(0, 131, 143, 0.2)'
+                        {pedidoSeleccionado.fechaPreparacion && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #90caf9'
                           }}>
-                            <strong>Controlado por:</strong> {pedidoSeleccionado.controladoPor}
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#1565c0',
+                              marginBottom: '4px'
+                            }}>
+                              ⏰ Preparación
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#1976d2',
+                              fontWeight: '500'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaPreparacion).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
                           </div>
+                        )}
+                        {pedidoSeleccionado.fechaControl && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #fff9c4 0%, #fff59d 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #fff176'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#f57f17',
+                              marginBottom: '4px'
+                            }}>
+                              🔍 Control
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#f9a825',
+                              fontWeight: '500'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaControl).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {!pedidoSeleccionado.fechaPreparacion && pedidoSeleccionado.fechaControl && (
+                          <div style={{ flex: 1 }}></div>
                         )}
                       </div>
                     )}
-                    <div style={{
-                      flex: 1,
-                      padding: '12px',
-                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-                      borderRadius: '8px',
-                      border: '1px solid #86efac'
-                    }}>
-                      <div style={{ 
-                        fontSize: '0.85rem', 
-                        fontWeight: '600', 
-                        color: '#166534',
-                        marginBottom: '4px'
+                    {/* Segunda fila: Pendiente de Carga y Finalizado */}
+                    {(pedidoSeleccionado.fechaPendienteCarga || pedidoSeleccionado.fechaFinalizado) && (
+                      <div style={{
+                        display: 'flex',
+                        gap: '12px'
                       }}>
-                        🏁 Finalizado
+                        {pedidoSeleccionado.fechaPendienteCarga && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #ffb74d'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#E65100',
+                              marginBottom: '4px'
+                            }}>
+                              ✅ Pendiente de Carga
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#F57C00',
+                              fontWeight: '500',
+                              marginBottom: '4px'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaPendienteCarga).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                            {pedidoSeleccionado.controladoPor && (
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                color: '#E65100',
+                                fontWeight: '500',
+                                marginTop: '4px',
+                                paddingTop: '4px',
+                                borderTop: '1px solid rgba(230, 81, 0, 0.2)'
+                              }}>
+                                <strong>Controlado por:</strong> {pedidoSeleccionado.controladoPor}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {pedidoSeleccionado.fechaFinalizado && (
+                          <div style={{
+                            flex: 1,
+                            padding: '12px',
+                            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                            borderRadius: '8px',
+                            border: '1px solid #86efac'
+                          }}>
+                            <div style={{ 
+                              fontSize: '0.85rem', 
+                              fontWeight: '600', 
+                              color: '#166534',
+                              marginBottom: '4px'
+                            }}>
+                              ✅ Finalizado
+                            </div>
+                            <div style={{ 
+                              fontSize: '0.9rem', 
+                              color: '#15803d',
+                              fontWeight: '500',
+                              marginBottom: '4px'
+                            }}>
+                              {new Date(pedidoSeleccionado.fechaFinalizado).toLocaleString('es-AR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: false,
+                              })}
+                            </div>
+                            {pedidoSeleccionado.finalizadoPor && (
+                              <div style={{ 
+                                fontSize: '0.85rem', 
+                                color: '#15803d',
+                                fontWeight: '500',
+                                marginTop: '4px',
+                                paddingTop: '4px',
+                                borderTop: '1px solid rgba(21, 128, 61, 0.2)'
+                              }}>
+                                <strong>Finalizado por:</strong> {pedidoSeleccionado.finalizadoPor}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!pedidoSeleccionado.fechaPendienteCarga && pedidoSeleccionado.fechaFinalizado && (
+                          <div style={{ flex: 1 }}></div>
+                        )}
                       </div>
-                      <div style={{ 
-                        fontSize: '0.9rem', 
-                        color: '#15803d',
-                        fontWeight: '500',
-                        marginBottom: '4px'
-                      }}>
-                        {new Date(pedidoSeleccionado.fechaActualizacion).toLocaleString('es-AR', {
-                          year: 'numeric',
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          hour12: false,
-                        })}
-                      </div>
-                      {pedidoSeleccionado.finalizadoPor && (
-                        <div style={{ 
-                          fontSize: '0.85rem', 
-                          color: '#15803d',
-                          fontWeight: '500',
-                          marginTop: '4px',
-                          paddingTop: '4px',
-                          borderTop: '1px solid rgba(21, 128, 61, 0.2)'
-                        }}>
-                          <strong>Finalizado por:</strong> {pedidoSeleccionado.finalizadoPor}
-                        </div>
-                      )}
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -4780,9 +5385,9 @@ const AdminPanel = () => {
               backgroundColor: '#e5e7eb',
               borderRadius: '12px',
               padding: '24px',
-              maxWidth: '900px',
-              width: '90%',
-              maxHeight: '90vh',
+              maxWidth: '1800px',
+              width: '98%',
+              maxHeight: '96vh',
               overflow: 'auto',
               boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
             }}
@@ -5001,21 +5606,79 @@ const AdminPanel = () => {
                                           </td>
                                           <td style={{ padding: '12px' }}>
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                              {item.vueltasPorFecha[fecha].map((vuelta, idx) => (
-                                                <span
-                                                  key={idx}
-                                                  style={{
-                                                    backgroundColor: esHoy ? '#10b981' : '#6b7280',
-                                                    color: 'white',
-                                                    padding: '4px 10px',
-                                                    borderRadius: '4px',
-                                                    fontSize: '0.85rem',
-                                                    fontWeight: '600',
-                                                  }}
-                                                >
-                                                  {vuelta}
-                                                </span>
-                                              ))}
+                                              {(() => {
+                                                // Crear un mapa de nombre de vuelta -> ID para ordenar por orden de creación
+                                                const vueltaOrdenMap = new Map();
+                                                vueltas.forEach((v, index) => {
+                                                  vueltaOrdenMap.set(v.nombre, v.id);
+                                                });
+                                                
+                                                // Ordenar vueltas por ID (orden de creación)
+                                                const vueltasOrdenadas = [...(item.vueltasPorFecha[fecha] || [])].sort((a, b) => {
+                                                  const idA = vueltaOrdenMap.get(a) || Infinity;
+                                                  const idB = vueltaOrdenMap.get(b) || Infinity;
+                                                  return idA - idB;
+                                                });
+                                                
+                                                return vueltasOrdenadas.map((vuelta, idx) => {
+                                                  // Buscar la planilla correspondiente para obtener el número
+                                                  const planillaCorrespondiente = todasLasPlanillas.find(pedido => 
+                                                    (pedido.transportistaNombre === item.transportistaNombre || pedido.transportista === item.transportistaNombre) &&
+                                                    pedido.vueltaNombre === vuelta &&
+                                                    pedido.fechaEntrega === fecha
+                                                  );
+                                                  
+                                                  const numeroPlanilla = planillaCorrespondiente?.numeroPlanilla || '';
+                                                  
+                                                  // Calcular el ancho máximo entre vuelta y número de planilla para mantener el tamaño
+                                                  const textoLargo = numeroPlanilla.length > vuelta.length ? numeroPlanilla : vuelta;
+                                                  const anchoMinimo = textoLargo.length * 8 + 20; // Aproximación del ancho necesario
+                                                  
+                                                  return (
+                                                    <span
+                                                      key={idx}
+                                                      onClick={() => abrirModalDetalleDesdeVuelta(item.transportistaNombre, vuelta, fecha)}
+                                                      style={{
+                                                        backgroundColor: esHoy ? '#10b981' : '#6b7280',
+                                                        color: 'white',
+                                                        padding: '4px 10px',
+                                                        borderRadius: '4px',
+                                                        fontSize: '0.85rem',
+                                                        fontWeight: '600',
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.2s ease',
+                                                        position: 'relative',
+                                                        display: 'inline-block',
+                                                        minWidth: `${anchoMinimo}px`,
+                                                        textAlign: 'center',
+                                                        whiteSpace: 'nowrap'
+                                                      }}
+                                                      onMouseEnter={(e) => {
+                                                        e.target.style.opacity = '0.8';
+                                                        e.target.style.transform = 'scale(1.05)';
+                                                        // Cambiar el texto al número de planilla
+                                                        if (numeroPlanilla) {
+                                                          e.target.setAttribute('data-original-text', e.target.textContent);
+                                                          e.target.textContent = numeroPlanilla;
+                                                        }
+                                                      }}
+                                                      onMouseLeave={(e) => {
+                                                        e.target.style.opacity = '1';
+                                                        e.target.style.transform = 'scale(1)';
+                                                        // Restaurar el texto original
+                                                        const originalText = e.target.getAttribute('data-original-text');
+                                                        if (originalText) {
+                                                          e.target.textContent = originalText;
+                                                          e.target.removeAttribute('data-original-text');
+                                                        }
+                                                      }}
+                                                      title={`Planilla: ${numeroPlanilla || 'N/A'}`}
+                                                    >
+                                                      {vuelta}
+                                                    </span>
+                                                  );
+                                                });
+                                              })()}
                                             </div>
                                           </td>
                                         </tr>

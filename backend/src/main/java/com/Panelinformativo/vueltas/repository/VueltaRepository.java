@@ -10,8 +10,8 @@ import java.util.Optional;
 @Repository
 public interface VueltaRepository extends JpaRepository<Vuelta, Long> {
     Optional<Vuelta> findByNombreIgnoreCase(String nombre);
-    List<Vuelta> findByActivoTrueOrderByNombreAsc();
-    List<Vuelta> findAllByOrderByNombreAsc();
-    List<Vuelta> findByNombreContainingIgnoreCaseAndActivoTrueOrderByNombreAsc(String nombre);
+    List<Vuelta> findByActivoTrueOrderByIdAsc();
+    List<Vuelta> findAllByOrderByIdAsc();
+    List<Vuelta> findByNombreContainingIgnoreCaseAndActivoTrueOrderByIdAsc(String nombre);
 }
 

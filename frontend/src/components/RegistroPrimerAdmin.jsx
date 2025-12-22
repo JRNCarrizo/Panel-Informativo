@@ -52,6 +52,7 @@ const RegistroPrimerAdmin = () => {
               name="username"
               value={formData.username}
               onChange={handleChange}
+              autoComplete="off"
               required
             />
           </div>
@@ -72,6 +73,7 @@ const RegistroPrimerAdmin = () => {
               name="password"
               value={formData.password}
               onChange={handleChange}
+              autoComplete="new-password"
               required
             />
           </div>
